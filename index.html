@@ -18,6 +18,8 @@
         .valid { background-color: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
         .invalid { background-color: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; }
         .meta-info { font-size: 0.85rem; color: #94a3b8; margin-top: 8px; line-height: 1.5; }
+        .preview-box { text-align: center; margin-top: 14px; display: none; }
+        .preview-img { max-width: 100%; border-radius: 6px; border: 2px solid #38bdf8; margin-top: 6px; }
     </style>
 </head>
 <body>
@@ -31,11 +33,16 @@
     </div>
 
     <div class="input-group">
-        <label for="imageInput">Select Image File:</label>
+        <label for="imageInput">Select Image File (Native, WhatsApp Compressed, or Screenshot):</label>
         <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp">
     </div>
 
     <button onclick="verifyImage()">Verify Authenticity</button>
+
+    <div id="previewContainer" class="preview-box">
+        <span style="font-size: 0.8rem; color: #94a3b8;">Cropped Area Preview (Photo Only):</span><br>
+        <img id="cropPreview" class="preview-img" alt="Cropped preview">
+    </div>
 
     <div id="resultBox" class="result-box">
         <div id="resultTitle" style="font-weight: bold; font-size: 1.1rem;"></div>
@@ -108,6 +115,42 @@
         const py = Math.max(0, Math.min(height - 1, Math.floor(y)));
         const idx = (py * width + px) * 4;
         return 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+    }
+
+    // Deteksi presisi batas foto di dalam screenshot galeri
+    function detectExactPhotoBounds(data, width, height, canonicalAspect) {
+        const exactTargetHeight = Math.round(width / canonicalAspect);
+
+        const rowLumas = new Float64Array(height);
+        for (let y = 0; y < height; y++) {
+            let sum = 0.0;
+            let count = 0;
+            for (let x = 30; x < width - 30; x += 15) {
+                const idx = (y * width + x) * 4;
+                sum += 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+                count++;
+            }
+            rowLumas[y] = count > 0 ? (sum / count) : 0;
+        }
+
+        let topY = -1;
+        for (let y = 250; y < Math.floor(height * 0.65); y++) {
+            if (rowLumas[y - 4] < 10 && rowLumas[y - 2] < 10 && rowLumas[y] >= 15 && rowLumas[y + 4] >= 15) {
+                topY = y;
+                break;
+            }
+        }
+
+        if (topY <= 0) {
+            topY = Math.round((height - exactTargetHeight) / 2);
+        }
+
+        return {
+            x: 0,
+            y: topY,
+            w: width,
+            h: exactTargetHeight
+        };
     }
 
     function auditImage(data, width, height, targetWidth, targetHeight, keyString, isDownscaled) {
@@ -219,6 +262,8 @@
         const resultBox = document.getElementById('resultBox');
         const resultTitle = document.getElementById('resultTitle');
         const resultMeta = document.getElementById('resultMeta');
+        const previewContainer = document.getElementById('previewContainer');
+        const cropPreview = document.getElementById('cropPreview');
 
         if (!rawKeyInput || !fileInput.files[0]) {
             alert('Please enter the Master Key and select an image file!');
@@ -257,17 +302,48 @@
                     return;
                 }
 
-                const isExactNative = (nativeWidth === canonicalWidth && nativeHeight === canonicalHeight);
+                const canonicalAspect = canonicalWidth / canonicalHeight;
+                const screenAspect = nativeWidth / nativeHeight;
+
+                // Deteksi jika gambar berupa screenshot dengan disparitas rasio layar
+                const isScreenshot = Math.abs(screenAspect - canonicalAspect) > 0.08;
+
                 let res, mode, threshold;
 
-                if (isExactNative) {
-                    res = auditImage(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
-                    mode = `Original Native Capture (${nativeWidth}x${nativeHeight}) [${canonicalWidth/16}x${canonicalHeight/16} Macroblocks]`;
-                    threshold = 85.0;
+                if (isScreenshot) {
+                    const bounds = detectExactPhotoBounds(rawData, nativeWidth, nativeHeight, canonicalAspect);
+
+                    const cropCanvas = document.createElement('canvas');
+                    cropCanvas.width = canonicalWidth;
+                    cropCanvas.height = canonicalHeight;
+                    const cropCtx = cropCanvas.getContext('2d');
+
+                    cropCtx.drawImage(
+                        canvas,
+                        bounds.x, bounds.y, bounds.w, bounds.h,
+                        0, 0, canonicalWidth, canonicalHeight
+                    );
+
+                    previewContainer.style.display = 'block';
+                    cropPreview.src = cropCanvas.toDataURL('image/jpeg', 0.85);
+
+                    const croppedData = cropCtx.getImageData(0, 0, canonicalWidth, canonicalHeight).data;
+                    res = auditImage(croppedData, canonicalWidth, canonicalHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
+                    mode = `Screenshot Auto-Cropped (${bounds.w}x${bounds.h} @ Y:${bounds.y}) &rarr; Canonical Re-aligned (${canonicalWidth}x${canonicalHeight})`;
+                    threshold = 60.0;
                 } else {
-                    res = auditImage(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, true);
-                    mode = `Compressed Social Media (${nativeWidth}x${nativeHeight} &rarr; Locked Grid ${canonicalWidth}x${canonicalHeight} [${canonicalWidth/16}x${canonicalHeight/16} Macroblocks])`;
-                    threshold = 68.0;
+                    previewContainer.style.display = 'none';
+                    const isExactNative = (nativeWidth === canonicalWidth && nativeHeight === canonicalHeight);
+
+                    if (isExactNative) {
+                        res = auditImage(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
+                        mode = `Original Native Capture (${nativeWidth}x${nativeHeight}) [${canonicalWidth/16}x${canonicalHeight/16} Macroblocks]`;
+                        threshold = 85.0;
+                    } else {
+                        res = auditImage(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, true);
+                        mode = `Compressed Social Media (${nativeWidth}x${nativeHeight} &rarr; Locked Grid ${canonicalWidth}x${canonicalHeight} [${canonicalWidth/16}x${canonicalHeight/16} Macroblocks])`;
+                        threshold = 68.0;
+                    }
                 }
 
                 resultBox.style.display = 'block';
