@@ -175,7 +175,7 @@
     <!-- ======================================================== -->
     <div id="simTab" class="tab-content">
         <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #ddd6fe; margin-bottom: 16px;">
-            🌐 <b>Simulation Ingress:</b> Simulates platform-side ingestion (WhatsApp / Facebook). Upload the compressed file to compute and seal its exact DNA transit fingerprint into <code>photo_sub_identities</code>.
+            🌐 <b>Simulation Ingress:</b> Simulates platform-side ingestion (WhatsApp / Facebook / Multi-Transcode). Upload the compressed file to compute and seal its exact DNA transit fingerprint into <code>photo_sub_identities</code>.
         </div>
 
         <div class="input-group">
@@ -183,7 +183,7 @@
             <select id="simChannel">
                 <option value="WHATSAPP">Meta WhatsApp (Standard 904x1600)</option>
                 <option value="FACEBOOK">Meta Facebook (Standard 1157x2048)</option>
-                <option value="MULTI_TRANSCODE">Multi-Platform Pipeline (WA &rarr; FB)</option>
+                <option value="MULTI_TRANSCODE">Multi-Platform Pipeline (WA &rarr; FB 904x1600)</option>
             </select>
         </div>
 
@@ -635,7 +635,7 @@
     }
 
     // ========================================================
-    // TAB 1: AUDIT ENGINE (STRICT CHANNEL & RESOLUTION BINDING)
+    // TAB 1: AUDIT ENGINE (PRECISE MULTI-STAGE MATRIX RESOLUTION)
     // ========================================================
     async function processEngine() {
         const rawKeyInput = document.getElementById('keyInput').value.trim();
@@ -719,6 +719,7 @@
                             .eq('master_key', rawKeyInput);
                         registeredSubIdentities = subsData || [];
 
+                        // Unreleased asset detected on public channel
                         if (masterRecord && masterRecord.release_status === 'GENESIS' && !isExactNative) {
                             isLeakAlert = true;
                         }
@@ -730,7 +731,9 @@
                 const actualScore = parseFloat(res.activeMatchRate.toFixed(2));
                 const currentResolution = `${nativeWidth}x${nativeHeight}`;
 
-                // INFER PHYSICAL INGRESS CHANNEL INDEPENDENTLY
+                // =======================================================
+                // PHYSICAL INGRESS IDENTIFICATION
+                // =======================================================
                 let physicalInferredChannel = 'UNKNOWN_CHANNEL';
                 if (isExactNative) {
                     physicalInferredChannel = 'RAW';
@@ -739,25 +742,17 @@
                 } else if (Math.max(nativeWidth, nativeHeight) === 2048 || (nativeWidth === 1157 && nativeHeight === 2048)) {
                     physicalInferredChannel = 'FACEBOOK';
                 } else if (nativeWidth === 904 && nativeHeight === 1600) {
-                    physicalInferredChannel = (actualScore >= 70.0 && actualScore < 85.0) ? 'MULTI_TRANSCODE' : 'WHATSAPP';
-                }
-
-                // STRICT RESOLUTION & CHANNEL MATCHING
-                // An image can ONLY match a sub-identity if its channel/resolution corresponds!
-                let matchedSub = null;
-                let minDrift = 999.0;
-                for (const sub of registeredSubIdentities) {
-                    const isResolutionMatch = (sub.transit_resolution === currentResolution);
-                    const isChannelMatch = (sub.channel_code === physicalInferredChannel);
-
-                    if (isResolutionMatch || isChannelMatch) {
-                        const drift = Math.abs(actualScore - parseFloat(sub.exact_dna_score));
-                        if (drift < minDrift) {
-                            minDrift = drift;
-                            matchedSub = sub;
-                        }
+                    // WA dimension: differentiate WA pure vs Multi-Transcode (WA -> FB)
+                    if (actualScore >= 92.0) {
+                        physicalInferredChannel = 'WHATSAPP';
+                    } else {
+                        physicalInferredChannel = 'MULTI_TRANSCODE';
                     }
                 }
+
+                // STRICT SUB-IDENTITY BINDING: Match by Channel Code
+                const matchedSub = registeredSubIdentities.find(s => s.channel_code === physicalInferredChannel) || null;
+                let minDrift = matchedSub ? Math.abs(actualScore - parseFloat(matchedSub.exact_dna_score)) : 999.0;
 
                 // =======================================================
                 // HIERARCHICAL FORENSIC VERDICT EVALUATION
@@ -781,7 +776,7 @@
                     resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is marked GENESIS by owner: ${masterRecord.device_hw_id}, detected on ${physicalInferredChannel})`;
 
                 } else if (isExactNative) {
-                    // Level 4: Pure Raw Camera Capture (Strict 99.90% or <= 5 damaged blocks)
+                    // Level 4: Pure Raw Camera Capture
                     if (actualScore >= 99.90 || res.count0 <= 5) {
                         verdict = "VERIFIED_ORIGINAL_RAW";
                         resultBox.className = "result-box valid";
@@ -801,25 +796,25 @@
                 } else {
                     // Level 6: Compressed Distribution Channels
                     if (matchedSub && minDrift <= 0.85) {
-                        // Perfectly matches a pre-registered transit channel
+                        // Sub-identity is sealed and matches within micro-drift
                         verdict = "VERIFIED_MATCH";
                         resultBox.className = "result-box valid";
                         resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (${matchedSub.channel_code}: Target ${matchedSub.exact_dna_score}%, Actual ${actualScore}%, Drift ${minDrift.toFixed(2)}%)`;
 
                     } else if (matchedSub && minDrift > 0.85) {
-                        // Channel matched, but score drifted away
+                        // Sub-identity exists, but the score drifted outside allowed tolerance
                         verdict = "MANIPULATION_DETECTED";
                         resultBox.className = "result-box tampered";
                         resultTitle.innerHTML = `🔴 SUB-IDENTITY DNA MISMATCH: Expected ${matchedSub.exact_dna_score}% on ${matchedSub.channel_code}, got ${actualScore}% (Drift: ${minDrift.toFixed(2)}% > limit &plusmn;0.85%)`;
 
                     } else if (physicalInferredChannel === 'MULTI_TRANSCODE') {
-                        // WA -> FB degradation detected, but not registered in sub-identities
+                        // Multi-transcode natural degradation without pre-registered sub-identity
                         verdict = "UNAUTHORIZED_TRANSIT_LEAK";
                         resultBox.className = "result-box leak";
                         resultTitle.innerHTML = `⚠️ CROSS-PLATFORM LEAK / UNSEALED MUTATION (${actualScore}% - Natural WA &rarr; FB multi-compression detected, but not registered as a legitimate transit sub-identity)`;
 
                     } else {
-                        // Authentic signal, but specific sub-identity for this channel is not registered yet
+                        // Authentic signal, but specific sub-identity is not registered yet in Tab 3
                         verdict = "UNREGISTERED_TRANSIT_CHANNEL";
                         resultBox.className = "result-box leak";
                         resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL ON ${physicalInferredChannel} (${actualScore}% - No sub-identity baseline registered yet for this platform in Tab 3)`;
