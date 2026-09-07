@@ -137,7 +137,7 @@
     <!-- ======================================================== -->
     <div id="registerTab" class="tab-content">
         <div style="background: rgba(2, 132, 199, 0.1); border: 1px solid #0284c7; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #bae6fd; margin-bottom: 16px;">
-            📸 <b>Origin Registration:</b> Upload the original raw camera capture to compute its native baseline score and register ownership into <code>photo_master_registry</code>.
+            📸 <b>Origin Registration:</b> Upload the original raw camera capture. The system verifies that the image strictly matches the Master Key with near-perfect integrity (<b>&ge; 99.90% match or &le; 5 anomaly blocks</b>) before allowing ownership registration.
         </div>
 
         <div class="input-group">
@@ -158,13 +158,13 @@
         <div class="input-group">
             <label for="regStatus">Media Lifecycle Release Status:</label>
             <select id="regStatus">
-                <option value="GENESIS">🔒 GENESIS (Unreleased Local Capture - Triggers Unauthorized Leak if spotted in wild)</option>
+                <option value="GENESIS">🔒 GENESIS (Unreleased Local Capture - Triggers Leak Alert if spotted in wild)</option>
                 <option value="PUBLIC_RELEASED">🌐 PUBLIC_RELEASED (Authorized for public distribution)</option>
             </select>
         </div>
 
         <div class="btn-group">
-            <button class="btn-register" onclick="registerMasterPhoto()">Register Master Photo to Cloud</button>
+            <button class="btn-register" onclick="registerMasterPhoto()">Verify & Register Master Photo</button>
         </div>
 
         <div id="regResultBox" class="result-box" style="margin-top: 16px;"></div>
@@ -585,7 +585,6 @@
         };
     }
 
-    // Helper to evaluate an image element
     function analyzeImageElement(img, rawKeyInput) {
         const nativeWidth = img.naturalWidth;
         const nativeHeight = img.naturalHeight;
@@ -636,7 +635,7 @@
     }
 
     // ========================================================
-    // TAB 1 AUDIT LOGIC (EXACT DNA MATCHING & LEAK PREVENTION)
+    // TAB 1: AUDIT ENGINE (HIERARCHICAL VERDICT EVALUATION)
     // ========================================================
     async function processEngine() {
         const rawKeyInput = document.getElementById('keyInput').value.trim();
@@ -698,57 +697,29 @@
                 const isLocalTampered = clusterAnalysis.isLocalTampered;
 
                 // =======================================================
-                // MICRO-DRIFT POLICY EVALUATION AGAINST DATABASE LEDGER
+                // QUERY REGISTRIES FROM SUPABASE
                 // =======================================================
                 let verdict = "UNKNOWN";
                 let masterRecord = null;
-                let subIdentity = null;
-                let platformProfile = null;
-                let detectedChannel = isExactNative ? 'RAW' : (isScreenshot ? 'SCREENSHOT' : 'UNKNOWN');
-                let expectedDNAScore = null;
-                let scoreDrift = null;
+                let registeredSubIdentities = [];
                 let isLeakAlert = false;
 
                 if (supabaseClient) {
                     try {
-                        // 1. Fetch Master Registry
                         const { data: masterData } = await supabaseClient
                             .from('photo_master_registry')
                             .select('*')
                             .eq('master_key', rawKeyInput)
                             .maybeSingle();
-
                         masterRecord = masterData;
 
-                        // 2. Resolve Channel if compressed
-                        if (!isExactNative && !isScreenshot) {
-                            if (nativeWidth === 904 && nativeHeight === 1600) {
-                                detectedChannel = 'WHATSAPP';
-                            } else if (nativeWidth === 1157 && nativeHeight === 2048) {
-                                detectedChannel = 'FACEBOOK';
-                            } else {
-                                detectedChannel = 'MULTI_TRANSCODE';
-                            }
+                        const { data: subsData } = await supabaseClient
+                            .from('photo_sub_identities')
+                            .select('*')
+                            .eq('master_key', rawKeyInput);
+                        registeredSubIdentities = subsData || [];
 
-                            // Fetch Platform Profile
-                            const { data: profData } = await supabaseClient
-                                .from('platform_profiles')
-                                .select('*')
-                                .eq('channel_code', detectedChannel)
-                                .maybeSingle();
-                            platformProfile = profData;
-
-                            // Fetch Exact Sub-Identity
-                            const { data: subData } = await supabaseClient
-                                .from('photo_sub_identities')
-                                .select('*')
-                                .eq('master_key', rawKeyInput)
-                                .eq('channel_code', detectedChannel)
-                                .maybeSingle();
-                            subIdentity = subData;
-                        }
-
-                        // Check Leakage Condition
+                        // If unreleased, any compressed or external capture is an unauthorized leak
                         if (masterRecord && masterRecord.release_status === 'GENESIS' && !isExactNative) {
                             isLeakAlert = true;
                         }
@@ -758,55 +729,91 @@
                 }
 
                 const actualScore = parseFloat(res.activeMatchRate.toFixed(2));
-                const maxAllowedDrift = platformProfile ? parseFloat(platformProfile.max_allowed_drift) : 0.75;
 
+                // Resolve matching sub-identity by closest score within safe cluster limits
+                let matchedSub = null;
+                let minDrift = 999.0;
+                for (const sub of registeredSubIdentities) {
+                    const drift = Math.abs(actualScore - parseFloat(sub.exact_dna_score));
+                    if (drift < minDrift) {
+                        minDrift = drift;
+                        matchedSub = sub;
+                    }
+                }
+
+                let detectedChannel = isExactNative ? 'RAW' : (isScreenshot ? 'SCREENSHOT' : (matchedSub ? matchedSub.channel_code : 'UNREGISTERED_CHANNEL'));
+
+                // =======================================================
+                // HIERARCHICAL FORENSIC VERDICT EVALUATION
+                // =======================================================
                 if (res.activeMatchRate < 58.0) {
+                    // Level 1: Wrong Key, Arbitrary Image, or AI Fake
                     verdict = "INVALID_KEY_OR_IMAGE";
                     resultBox.className = "result-box invalid";
                     resultTitle.innerHTML = `🔴 NOT AN OFFICIAL CAMERA / INVALID KEY (${actualScore}%)`;
+
                 } else if (isLocalTampered) {
+                    // Level 2: Local Physical Manipulation (Sticker/Brushstroke on 5x5 cluster)
                     verdict = "TAMPER_DETECTED";
                     resultBox.className = "result-box tampered";
-                    resultTitle.innerHTML = `🟡 LOCAL TAMPERING DETECTED! (${res.count0} damaged blocks, Peak: ${clusterAnalysis.maxLocalDamageCluster}/${clusterAnalysis.thresholdUsed})`;
+                    resultTitle.innerHTML = `🟡 LOCAL MANIPULATION DETECTED! (${res.count0} damaged blocks, Cluster Peak: ${clusterAnalysis.maxLocalDamageCluster}/${clusterAnalysis.thresholdUsed})`;
+
                 } else if (isLeakAlert) {
+                    // Level 3: Unreleased Private File Leaked to External Channels
                     verdict = "UNAUTHORIZED_LEAK";
                     resultBox.className = "result-box leak";
-                    resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is marked GENESIS by owner ${masterRecord.device_hw_id})`;
-                } else if (!isExactNative && !isScreenshot) {
-                    // Micro-Drift Verification against exact sub-identity
-                    if (subIdentity) {
-                        expectedDNAScore = parseFloat(subIdentity.exact_dna_score);
-                        scoreDrift = Math.abs(actualScore - expectedDNAScore);
+                    resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is registered as GENESIS by owner: ${masterRecord.device_hw_id})`;
 
-                        if (scoreDrift <= maxAllowedDrift) {
-                            verdict = "VERIFIED_MATCH";
-                            resultBox.className = "result-box valid";
-                            resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (Expected: ${expectedDNAScore}%, Actual: ${actualScore}%, Drift: ${scoreDrift.toFixed(2)}%)`;
-                        } else {
-                            verdict = "MANIPULATION_DETECTED";
-                            resultBox.className = "result-box tampered";
-                            resultTitle.innerHTML = `🔴 MANIPULATION DETECTED: DNA Drift Exceeded! (Expected: ${expectedDNAScore}%, Actual: ${actualScore}%, Drift: ${scoreDrift.toFixed(2)}% > Max Allowed ${maxAllowedDrift}%)`;
-                        }
+                } else if (isExactNative) {
+                    // Level 4: Pure Raw Camera Capture (Strict 99.90% or <= 5 damaged blocks)
+                    if (actualScore >= 99.90 || res.count0 <= 5) {
+                        verdict = "VERIFIED_ORIGINAL_RAW";
+                        resultBox.className = "result-box valid";
+                        resultTitle.innerHTML = `🟢 PRISTINE CAMERA RAW (${actualScore}% - Intact source with only ${res.count0} anomaly blocks)`;
                     } else {
-                        verdict = "UNREGISTERED_SUB_IDENTITY";
-                        resultBox.className = "result-box leak";
-                        resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL BUT UNSEALED PLATFORM DNA (No recorded sub-identity for channel ${detectedChannel})`;
+                        verdict = "TAMPERED_RAW_CANVAS";
+                        resultBox.className = "result-box tampered";
+                        resultTitle.innerHTML = `🔴 RAW CANVAS TAMPERED (${actualScore}% - ${res.count0} damaged blocks exceed pristine tolerance limit of 5 blocks!)`;
                     }
-                } else {
-                    verdict = isExactNative ? "VERIFIED_ORIGINAL_RAW" : "VERIFIED_SCREENSHOT";
+
+                } else if (isScreenshot) {
+                    // Level 5: Symmetric Mobile Screenshot
+                    verdict = "VERIFIED_SCREENSHOT";
                     resultBox.className = "result-box valid";
-                    resultTitle.innerHTML = `🟢 AUTHENTIC SOURCE (${auditMode})`;
+                    resultTitle.innerHTML = `🟢 AUTHENTIC SOURCE (Symmetrically Cropped Screenshot)`;
+
+                } else {
+                    // Level 6: Compressed Distribution Channels
+                    if (matchedSub && minDrift <= 0.85) {
+                        // Perfectly matches a pre-registered transit channel
+                        verdict = "VERIFIED_MATCH";
+                        resultBox.className = "result-box valid";
+                        resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (${matchedSub.channel_code}: Target ${matchedSub.exact_dna_score}%, Actual ${actualScore}%, Drift ${minDrift.toFixed(2)}%)`;
+                    } else if (actualScore >= 70.0 && actualScore < 85.0 && !isLocalTampered) {
+                        // Multi-Transcode or Cross-Platform Leak (WA -> FB) without local tampering
+                        verdict = "UNAUTHORIZED_TRANSIT_LEAK";
+                        resultBox.className = "result-box leak";
+                        resultTitle.innerHTML = `⚠️ CROSS-PLATFORM LEAK / UNSEALED MUTATION (${actualScore}% - Natural WA &rarr; FB multi-compression detected, but not registered as a legitimate transit sub-identity)`;
+                    } else if (matchedSub && minDrift > 0.85) {
+                        verdict = "MANIPULATION_DETECTED";
+                        resultBox.className = "result-box tampered";
+                        resultTitle.innerHTML = `🔴 SUB-IDENTITY DNA MISMATCH: Expected ${matchedSub.exact_dna_score}% on ${matchedSub.channel_code}, got ${actualScore}% (Drift: ${minDrift.toFixed(2)}% > limit &plusmn;0.85%)`;
+                    } else {
+                        verdict = "UNREGISTERED_TRANSIT_LEAK";
+                        resultBox.className = "result-box leak";
+                        resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL BUT UNSEALED TRANSIT DNA (${actualScore}% - No matching transit baseline found in database)`;
+                    }
                 }
 
-                // Log audit into audit_ledger
+                // Log audit into Supabase
                 if (supabaseClient) {
                     try {
                         await supabaseClient.from('audit_ledger').insert([{
                             master_key: rawKeyInput,
                             channel_detected: detectedChannel,
                             actual_match_rate: actualScore,
-                            expected_dna_score: expectedDNAScore,
-                            score_drift: scoreDrift !== null ? parseFloat(scoreDrift.toFixed(2)) : null,
+                            expected_dna_score: matchedSub ? parseFloat(matchedSub.exact_dna_score) : null,
+                            score_drift: matchedSub ? parseFloat(minDrift.toFixed(2)) : null,
                             audit_verdict: verdict
                         }]);
                     } catch(err) {
@@ -821,15 +828,14 @@
                 resultMeta.innerHTML = `
                     <b>Master Key:</b> ${rawKeyInput}<br>
                     <b>Hardware Binding:</b> ${masterRecord 
-                        ? `<span style="color: #38bdf8; font-weight: bold;">Registered Owner (HW-ID: ${masterRecord.device_hw_id}) [${masterRecord.release_status}]</span>` 
+                        ? `<span style="color: #38bdf8; font-weight: bold;">Registered Owner (${masterRecord.device_hw_id}) [${masterRecord.release_status}]</span>` 
                         : '<span style="color: #94a3b8;">Unregistered in master registry</span>'}<br>
                     <b>Detected Channel:</b> ${detectedChannel} | <b>Audit Mode:</b> ${auditMode}<br>
                     <b>Active Polarity Match:</b> ${res.matchedActiveBits.toLocaleString()} / ${res.totalActiveAudited.toLocaleString()} blocks (${actualScore}%)<br>
-                    ${expectedDNAScore !== null ? `<b>Platform Target DNA:</b> ${expectedDNAScore}% | <b>Observed Drift:</b> ${scoreDrift.toFixed(2)}% (Limit: &plusmn;${maxAllowedDrift}%)<br>` : ''}
+                    ${matchedSub ? `<b>Target Platform DNA:</b> ${matchedSub.exact_dna_score}% (${matchedSub.channel_code}) | <b>Observed Drift:</b> ${minDrift.toFixed(2)}%<br>` : ''}
                     <b>Spatial Cluster Analysis:</b> ${isLocalTampered 
                         ? `<span style="color: #f87171; font-weight: bold;">Dense damage cluster detected at X:${clusterAnalysis.clusterCenter.x}, Y:${clusterAnalysis.clusterCenter.y} (${clusterAnalysis.maxLocalDamageCluster} adjacent damaged blocks exceeding tolerance ${clusterAnalysis.thresholdUsed})!</span>` 
                         : `<span style="color: #34d399;">Evenly distributed degradation (Peak: ${clusterAnalysis.maxLocalDamageCluster}, Safe Tolerance: ${clusterAnalysis.thresholdUsed})</span>`}<br>
-                    ${isLeakAlert ? `<span style="color: #fbbf24; font-weight: bold;">🚨 Alert: This image is marked GENESIS by owner (${masterRecord.device_hw_id}) but was audited from a public distribution channel!</span><br>` : ''}
 
                     <div class="distribution-box">
                         <b>Macroblock Health (${totalBlk.toLocaleString()} blocks):</b>
@@ -846,11 +852,11 @@
                     audit_verdict: verdict,
                     channel_detected: detectedChannel,
                     actual_match_rate: actualScore,
-                    expected_dna_score: expectedDNAScore,
-                    score_drift: scoreDrift !== null ? parseFloat(scoreDrift.toFixed(2)) : null,
+                    matched_sub_identity: matchedSub ? matchedSub.channel_code : null,
+                    expected_dna_score: matchedSub ? parseFloat(matchedSub.exact_dna_score) : null,
+                    score_drift: matchedSub ? parseFloat(minDrift.toFixed(2)) : null,
                     is_local_tampered: isLocalTampered,
                     cluster_peak: clusterAnalysis.maxLocalDamageCluster,
-                    unauthorized_leak: isLeakAlert,
                     owner_device_hw_id: masterRecord ? masterRecord.device_hw_id : "UNREGISTERED"
                 }, null, 2);
             };
@@ -860,7 +866,7 @@
     }
 
     // ========================================================
-    // TAB 2: REGISTER MASTER PHOTO
+    // TAB 2: REGISTER MASTER PHOTO (STRICT 99.90% / <= 5 BLOCKS)
     // ========================================================
     async function handleRegisterFileSelect() {
         const fileInput = document.getElementById('regFileInput');
@@ -908,57 +914,68 @@
             return;
         }
 
+        if (!fileInput.files[0]) {
+            alert('Please select the original raw camera capture file to verify authenticity before registering!');
+            return;
+        }
+
         if (!supabaseClient) {
             alert('Supabase client is not connected!');
             return;
         }
 
-        let rawScore = 99.85; // Default baseline if not recalculated
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            const img = new Image();
+            img.onload = async function() {
+                const analysis = analyzeImageElement(img, masterKey);
+                const rawScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
+                const damagedBlocks = analysis.res.count0;
 
-        if (fileInput.files[0]) {
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                const img = new Image();
-                img.onload = async function() {
-                    const analysis = analyzeImageElement(img, masterKey);
-                    rawScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
-                    await executeMasterRegistryInsert(masterKey, deviceId, rawScore, status, regBox);
-                };
-                img.src = e.target.result;
+                // STRICT GATEKEEPER RULE: Must achieve >= 99.90% OR damaged blocks <= 5
+                const isPristine = (rawScore >= 99.90 || damagedBlocks <= 5);
+
+                if (!isPristine) {
+                    regBox.className = "result-box invalid";
+                    regBox.style.display = 'block';
+                    regBox.innerHTML = `
+                        <b>❌ REGISTRATION REJECTED!</b><br>
+                        <b>Active Polarity Match:</b> ${rawScore}% (${damagedBlocks} damaged blocks)<br>
+                        <i>Pristine camera source must achieve &ge; 99.90% with &le; 5 damaged blocks. Mismatched, edited, or arbitrary images cannot claim master ownership!</i>
+                    `;
+                    return;
+                }
+
+                try {
+                    const { error } = await supabaseClient
+                        .from('photo_master_registry')
+                        .upsert([{
+                            master_key: masterKey,
+                            device_hw_id: deviceId,
+                            raw_exact_score: rawScore,
+                            release_status: status
+                        }], { onConflict: 'master_key' });
+
+                    if (error) throw error;
+
+                    regBox.className = "result-box valid";
+                    regBox.style.display = 'block';
+                    regBox.innerHTML = `
+                        <b>✅ Master Photo Verified & Registered!</b><br>
+                        <b>Master Key:</b> ${masterKey}<br>
+                        <b>Device HW-ID:</b> ${deviceId}<br>
+                        <b>Verified Pristine Baseline:</b> ${rawScore}% (${damagedBlocks} anomaly blocks)<br>
+                        <b>Lifecycle Release Status:</b> ${status}
+                    `;
+                } catch(err) {
+                    regBox.className = "result-box invalid";
+                    regBox.style.display = 'block';
+                    regBox.innerHTML = `<b>Registration Failed:</b> ${err.message}`;
+                }
             };
-            reader.readAsDataURL(fileInput.files[0]);
-        } else {
-            await executeMasterRegistryInsert(masterKey, deviceId, rawScore, status, regBox);
-        }
-    }
-
-    async function executeMasterRegistryInsert(masterKey, deviceId, rawScore, status, regBox) {
-        try {
-            const { error } = await supabaseClient
-                .from('photo_master_registry')
-                .upsert([{
-                    master_key: masterKey,
-                    device_hw_id: deviceId,
-                    raw_exact_score: rawScore,
-                    release_status: status
-                }], { onConflict: 'master_key' });
-
-            if (error) throw error;
-
-            regBox.className = "result-box valid";
-            regBox.style.display = 'block';
-            regBox.innerHTML = `
-                <b>✅ Master Photo Successfully Registered!</b><br>
-                <b>Master Key:</b> ${masterKey}<br>
-                <b>Device HW-ID:</b> ${deviceId}<br>
-                <b>Raw Source Baseline:</b> ${rawScore}%<br>
-                <b>Lifecycle Release Status:</b> ${status}
-            `;
-        } catch(err) {
-            regBox.className = "result-box invalid";
-            regBox.style.display = 'block';
-            regBox.innerHTML = `<b>Registration Failed:</b> ${err.message}`;
-        }
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(fileInput.files[0]);
     }
 
     // ========================================================
@@ -1002,6 +1019,18 @@
                 const exactScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
                 const resolutionStr = `${img.naturalWidth}x${img.naturalHeight}`;
 
+                // Validate that signal exists before sealing sub-identity
+                if (exactScore < 58.0) {
+                    simBox.className = "result-box invalid";
+                    simBox.style.display = 'block';
+                    simBox.innerHTML = `
+                        <b>❌ Ingress Simulation Rejected!</b><br>
+                        <b>Match Rate:</b> ${exactScore}% (Below 58.0% forensic baseline)<br>
+                        <i>Cannot seal sub-identity DNA for an invalid or non-corresponding asset.</i>
+                    `;
+                    return;
+                }
+
                 try {
                     const { error } = await supabaseClient
                         .from('photo_sub_identities')
@@ -1022,7 +1051,7 @@
                         <b>Platform Channel:</b> ${channelCode}<br>
                         <b>Recorded Resolution:</b> ${resolutionStr}<br>
                         <b>Exact Compressed DNA Score:</b> <span style="font-size: 1.1rem; color: #38bdf8; font-weight: bold;">${exactScore}%</span><br>
-                        <i>Sub-identity record established. Audits for this image on ${channelCode} must now strictly match ${exactScore}% (&plusmn;0.75%).</i>
+                        <i>Sub-identity record established. Audits for this image on ${channelCode} must now strictly match ${exactScore}% (&plusmn;0.85%).</i>
                     `;
                 } catch(err) {
                     simBox.className = "result-box invalid";
