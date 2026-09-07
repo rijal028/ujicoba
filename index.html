@@ -635,7 +635,7 @@
     }
 
     // ========================================================
-    // TAB 1: AUDIT ENGINE (HIERARCHICAL VERDICT EVALUATION)
+    // TAB 1: AUDIT ENGINE (STRICT CHANNEL & RESOLUTION BINDING)
     // ========================================================
     async function processEngine() {
         const rawKeyInput = document.getElementById('keyInput').value.trim();
@@ -719,7 +719,6 @@
                             .eq('master_key', rawKeyInput);
                         registeredSubIdentities = subsData || [];
 
-                        // If unreleased, any compressed or external capture is an unauthorized leak
                         if (masterRecord && masterRecord.release_status === 'GENESIS' && !isExactNative) {
                             isLeakAlert = true;
                         }
@@ -729,19 +728,36 @@
                 }
 
                 const actualScore = parseFloat(res.activeMatchRate.toFixed(2));
+                const currentResolution = `${nativeWidth}x${nativeHeight}`;
 
-                // Resolve matching sub-identity by closest score within safe cluster limits
+                // INFER PHYSICAL INGRESS CHANNEL INDEPENDENTLY
+                let physicalInferredChannel = 'UNKNOWN_CHANNEL';
+                if (isExactNative) {
+                    physicalInferredChannel = 'RAW';
+                } else if (isScreenshot) {
+                    physicalInferredChannel = 'SCREENSHOT';
+                } else if (Math.max(nativeWidth, nativeHeight) === 2048 || (nativeWidth === 1157 && nativeHeight === 2048)) {
+                    physicalInferredChannel = 'FACEBOOK';
+                } else if (nativeWidth === 904 && nativeHeight === 1600) {
+                    physicalInferredChannel = (actualScore >= 70.0 && actualScore < 85.0) ? 'MULTI_TRANSCODE' : 'WHATSAPP';
+                }
+
+                // STRICT RESOLUTION & CHANNEL MATCHING
+                // An image can ONLY match a sub-identity if its channel/resolution corresponds!
                 let matchedSub = null;
                 let minDrift = 999.0;
                 for (const sub of registeredSubIdentities) {
-                    const drift = Math.abs(actualScore - parseFloat(sub.exact_dna_score));
-                    if (drift < minDrift) {
-                        minDrift = drift;
-                        matchedSub = sub;
+                    const isResolutionMatch = (sub.transit_resolution === currentResolution);
+                    const isChannelMatch = (sub.channel_code === physicalInferredChannel);
+
+                    if (isResolutionMatch || isChannelMatch) {
+                        const drift = Math.abs(actualScore - parseFloat(sub.exact_dna_score));
+                        if (drift < minDrift) {
+                            minDrift = drift;
+                            matchedSub = sub;
+                        }
                     }
                 }
-
-                let detectedChannel = isExactNative ? 'RAW' : (isScreenshot ? 'SCREENSHOT' : (matchedSub ? matchedSub.channel_code : 'UNREGISTERED_CHANNEL'));
 
                 // =======================================================
                 // HIERARCHICAL FORENSIC VERDICT EVALUATION
@@ -762,7 +778,7 @@
                     // Level 3: Unreleased Private File Leaked to External Channels
                     verdict = "UNAUTHORIZED_LEAK";
                     resultBox.className = "result-box leak";
-                    resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is registered as GENESIS by owner: ${masterRecord.device_hw_id})`;
+                    resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is marked GENESIS by owner: ${masterRecord.device_hw_id}, detected on ${physicalInferredChannel})`;
 
                 } else if (isExactNative) {
                     // Level 4: Pure Raw Camera Capture (Strict 99.90% or <= 5 damaged blocks)
@@ -789,19 +805,24 @@
                         verdict = "VERIFIED_MATCH";
                         resultBox.className = "result-box valid";
                         resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (${matchedSub.channel_code}: Target ${matchedSub.exact_dna_score}%, Actual ${actualScore}%, Drift ${minDrift.toFixed(2)}%)`;
-                    } else if (actualScore >= 70.0 && actualScore < 85.0 && !isLocalTampered) {
-                        // Multi-Transcode or Cross-Platform Leak (WA -> FB) without local tampering
-                        verdict = "UNAUTHORIZED_TRANSIT_LEAK";
-                        resultBox.className = "result-box leak";
-                        resultTitle.innerHTML = `⚠️ CROSS-PLATFORM LEAK / UNSEALED MUTATION (${actualScore}% - Natural WA &rarr; FB multi-compression detected, but not registered as a legitimate transit sub-identity)`;
+
                     } else if (matchedSub && minDrift > 0.85) {
+                        // Channel matched, but score drifted away
                         verdict = "MANIPULATION_DETECTED";
                         resultBox.className = "result-box tampered";
                         resultTitle.innerHTML = `🔴 SUB-IDENTITY DNA MISMATCH: Expected ${matchedSub.exact_dna_score}% on ${matchedSub.channel_code}, got ${actualScore}% (Drift: ${minDrift.toFixed(2)}% > limit &plusmn;0.85%)`;
-                    } else {
-                        verdict = "UNREGISTERED_TRANSIT_LEAK";
+
+                    } else if (physicalInferredChannel === 'MULTI_TRANSCODE') {
+                        // WA -> FB degradation detected, but not registered in sub-identities
+                        verdict = "UNAUTHORIZED_TRANSIT_LEAK";
                         resultBox.className = "result-box leak";
-                        resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL BUT UNSEALED TRANSIT DNA (${actualScore}% - No matching transit baseline found in database)`;
+                        resultTitle.innerHTML = `⚠️ CROSS-PLATFORM LEAK / UNSEALED MUTATION (${actualScore}% - Natural WA &rarr; FB multi-compression detected, but not registered as a legitimate transit sub-identity)`;
+
+                    } else {
+                        // Authentic signal, but specific sub-identity for this channel is not registered yet
+                        verdict = "UNREGISTERED_TRANSIT_CHANNEL";
+                        resultBox.className = "result-box leak";
+                        resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL ON ${physicalInferredChannel} (${actualScore}% - No sub-identity baseline registered yet for this platform in Tab 3)`;
                     }
                 }
 
@@ -810,7 +831,7 @@
                     try {
                         await supabaseClient.from('audit_ledger').insert([{
                             master_key: rawKeyInput,
-                            channel_detected: detectedChannel,
+                            channel_detected: physicalInferredChannel,
                             actual_match_rate: actualScore,
                             expected_dna_score: matchedSub ? parseFloat(matchedSub.exact_dna_score) : null,
                             score_drift: matchedSub ? parseFloat(minDrift.toFixed(2)) : null,
@@ -830,7 +851,7 @@
                     <b>Hardware Binding:</b> ${masterRecord 
                         ? `<span style="color: #38bdf8; font-weight: bold;">Registered Owner (${masterRecord.device_hw_id}) [${masterRecord.release_status}]</span>` 
                         : '<span style="color: #94a3b8;">Unregistered in master registry</span>'}<br>
-                    <b>Detected Channel:</b> ${detectedChannel} | <b>Audit Mode:</b> ${auditMode}<br>
+                    <b>Detected Channel:</b> ${physicalInferredChannel} (${currentResolution}) | <b>Audit Mode:</b> ${auditMode}<br>
                     <b>Active Polarity Match:</b> ${res.matchedActiveBits.toLocaleString()} / ${res.totalActiveAudited.toLocaleString()} blocks (${actualScore}%)<br>
                     ${matchedSub ? `<b>Target Platform DNA:</b> ${matchedSub.exact_dna_score}% (${matchedSub.channel_code}) | <b>Observed Drift:</b> ${minDrift.toFixed(2)}%<br>` : ''}
                     <b>Spatial Cluster Analysis:</b> ${isLocalTampered 
@@ -850,7 +871,8 @@
 
                 jsonPayload.innerText = JSON.stringify({
                     audit_verdict: verdict,
-                    channel_detected: detectedChannel,
+                    channel_detected: physicalInferredChannel,
+                    resolution: currentResolution,
                     actual_match_rate: actualScore,
                     matched_sub_identity: matchedSub ? matchedSub.channel_code : null,
                     expected_dna_score: matchedSub ? parseFloat(matchedSub.exact_dna_score) : null,
@@ -932,7 +954,7 @@
                 const rawScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
                 const damagedBlocks = analysis.res.count0;
 
-                // STRICT GATEKEEPER RULE: Must achieve >= 99.90% OR damaged blocks <= 5
+                // STRICT GATEKEEPER: >= 99.90% OR damaged blocks <= 5
                 const isPristine = (rawScore >= 99.90 || damagedBlocks <= 5);
 
                 if (!isPristine) {
@@ -1019,7 +1041,6 @@
                 const exactScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
                 const resolutionStr = `${img.naturalWidth}x${img.naturalHeight}`;
 
-                // Validate that signal exists before sealing sub-identity
                 if (exactScore < 58.0) {
                     simBox.className = "result-box invalid";
                     simBox.style.display = 'block';
