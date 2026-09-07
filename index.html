@@ -3,60 +3,247 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecurePixel Bound-Key Verifier</title>
+    <title>SecurePixel Forensic & Ownership Hub</title>
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- ExifReader for reading HW-ID & Signature metadata -->
+    <script src="https://cdn.jsdelivr.net/npm/exifreader@4.20.0/dist/exif-reader.min.js"></script>
     <style>
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body { background-color: #0f172a; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
-        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; max-width: 600px; width: 100%; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        h1 { font-size: 1.4rem; margin-top: 0; color: #38bdf8; text-align: center; }
+        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; max-width: 900px; width: 100%; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        h1 { font-size: 1.3rem; margin-top: 0; color: #38bdf8; text-align: center; }
+        
+        /* Tab Navigation */
+        .tab-bar { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
+        .tab-btn { flex: 1; padding: 10px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #94a3b8; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.82rem; }
+        .tab-btn.active { background: #0284c7; color: #fff; border-color: #38bdf8; }
+        
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
         .input-group { margin-bottom: 16px; }
         label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; }
-        input[type="text"], input[type="file"] { width: 100%; padding: 10px; background-color: #0f172a; border: 1px solid #475569; border-radius: 6px; color: #fff; }
-        button { width: 100%; padding: 12px; background-color: #0284c7; border: none; border-radius: 6px; color: white; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        button:hover { background-color: #0369a1; }
+        input[type="text"], input[type="file"], select { width: 100%; padding: 10px; background-color: #0f172a; border: 1px solid #475569; border-radius: 6px; color: #fff; }
+        .btn-group { display: flex; gap: 10px; margin-top: 14px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 6px; color: white; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-verify { background-color: #0284c7; }
+        .btn-verify:hover { background-color: #0369a1; }
+        .btn-register { background-color: #10b981; }
+        .btn-register:hover { background-color: #059669; }
+        .btn-sim { background-color: #8b5cf6; }
+        .btn-sim:hover { background-color: #7c3aed; }
+
         .result-box { margin-top: 20px; padding: 16px; border-radius: 8px; display: none; }
         .valid { background-color: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; }
+        .tampered { background-color: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; }
         .invalid { background-color: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; }
-        .meta-info { font-size: 0.85rem; color: #94a3b8; margin-top: 8px; line-height: 1.5; }
+        .leak { background-color: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; }
+        .meta-info { font-size: 0.85rem; color: #94a3b8; margin-top: 8px; line-height: 1.6; }
+        
         .preview-box { text-align: center; margin-top: 14px; display: none; }
         .preview-img { max-width: 100%; border-radius: 6px; border: 2px solid #38bdf8; margin-top: 6px; }
+
+        .heatmap-wrapper { margin-top: 18px; text-align: center; display: none; background: #020617; border: 1px solid #334155; border-radius: 8px; padding: 14px; }
+        .heatmap-canvas-container { position: relative; display: inline-block; max-width: 100%; border-radius: 6px; overflow: hidden; border: 1px solid #475569; }
+        .heatmap-canvas-container canvas { display: block; max-width: 100%; height: auto; }
+        #heatmapOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        
+        .controls-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; margin-top: 12px; font-size: 0.82rem; color: #94a3b8; }
+        .controls-row label { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: #f1f5f9; cursor: pointer; }
+
+        .fingerprint-box { background: #020617; border: 1px dashed #38bdf8; border-radius: 6px; padding: 12px; margin-top: 14px; font-family: monospace; font-size: 0.85rem; color: #e2e8f0; }
+        .fingerprint-val { color: #38bdf8; font-weight: bold; word-break: break-all; }
+        .distribution-box { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px; margin-top: 10px; font-family: monospace; font-size: 0.8rem; }
+        .bar-container { display: flex; height: 12px; border-radius: 3px; overflow: hidden; margin: 6px 0; }
+        .bar-100 { background: #10b981; }
+        .bar-0 { background: #ef4444; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h1>SecurePixel Authenticity Verifier</h1>
-    
-    <div class="input-group">
-        <label for="keyInput">Master Key (Format: TIMESTAMP_WIDTHxHEIGHT):</label>
-        <input type="text" id="keyInput" placeholder="Example: 1725166800000_2944x2944">
+    <h1>SecurePixel Forensic & Ownership Hub</h1>
+
+    <!-- 3-Tab Bar -->
+    <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('auditTab')">🔍 Forensic Audit & Verification</button>
+        <button class="tab-btn" onclick="switchTab('registerTab')">📸 Register Master Photo (Origin)</button>
+        <button class="tab-btn" onclick="switchTab('simTab')">🌐 Platform Ingestion Simulator</button>
     </div>
 
-    <div class="input-group">
-        <label for="imageInput">Select Image File (Native, WhatsApp Compressed, or Screenshot):</label>
-        <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp">
+    <!-- ======================================================== -->
+    <!-- TAB 1: AUDIT & VERIFICATION                              -->
+    <!-- ======================================================== -->
+    <div id="auditTab" class="tab-content active">
+        <div class="input-group">
+            <label for="imageInput">Select File to Audit (Raw Camera / Downscaled Social Media / Tampered Asset):</label>
+            <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" onchange="autoDetectKeyFromName()">
+        </div>
+
+        <div class="input-group">
+            <label for="keyInput">Master Key (Auto-detected or manual input):</label>
+            <input type="text" id="keyInput" placeholder="e.g. 1788597108139_1808x3200">
+        </div>
+
+        <div class="btn-group">
+            <button class="btn-verify" onclick="processEngine()">Audit 1-Bit Forensic Integrity</button>
+        </div>
+
+        <div id="previewContainer" class="preview-box">
+            <span style="font-size: 0.8rem; color: #38bdf8; font-weight: bold;">Symmetrically Cropped Screenshot Region:</span><br>
+            <img id="cropPreview" class="preview-img" alt="Cropped preview">
+        </div>
+
+        <div id="heatmapContainer" class="heatmap-wrapper">
+            <div style="font-weight: bold; font-size: 0.95rem; color: #38bdf8; margin-bottom: 4px;">Spatial Integrity Heatmap (1-Bit Gold Pair)</div>
+            
+            <div class="controls-row">
+                <label>
+                    <input type="radio" name="heatmapMode" value="defects_only" checked onchange="switchHeatmapMode(this.value)">
+                    <b>Highlight Damaged / Tampered Blocks Only</b>
+                </label>
+                <label>
+                    <input type="radio" name="heatmapMode" value="full_grid" onchange="switchHeatmapMode(this.value)">
+                    Display Full Grid
+                </label>
+            </div>
+
+            <div class="heatmap-canvas-container" style="margin-top: 10px;">
+                <canvas id="photoBaseCanvas"></canvas>
+                <canvas id="heatmapOverlay"></canvas>
+            </div>
+
+            <div class="controls-row">
+                <span>Damage Overlay Opacity:</span>
+                <input type="range" id="opacitySlider" min="0.2" max="1" step="0.05" value="0.85" oninput="updateHeatmapOpacity(this.value)">
+                <span id="opacityVal">85%</span>
+            </div>
+        </div>
+
+        <div id="resultBox" class="result-box">
+            <div id="resultTitle" style="font-weight: bold; font-size: 1.1rem;"></div>
+            <div id="resultMeta" class="meta-info"></div>
+
+            <div class="fingerprint-box">
+                <b>Supabase Audit Payload (JSON):</b><br>
+                <pre id="jsonPayload" class="fingerprint-val" style="margin: 6px 0; white-space: pre-wrap;"></pre>
+            </div>
+        </div>
     </div>
 
-    <button onclick="verifyImage()">Verify Authenticity</button>
+    <!-- ======================================================== -->
+    <!-- TAB 2: REGISTER MASTER PHOTO (ORIGIN)                    -->
+    <!-- ======================================================== -->
+    <div id="registerTab" class="tab-content">
+        <div style="background: rgba(2, 132, 199, 0.1); border: 1px solid #0284c7; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #bae6fd; margin-bottom: 16px;">
+            📸 <b>Origin Registration:</b> Upload the original raw camera capture to compute its native baseline score and register ownership into <code>photo_master_registry</code>.
+        </div>
 
-    <div id="previewContainer" class="preview-box">
-        <span style="font-size: 0.8rem; color: #94a3b8;">Cropped Area Preview (Photo Only):</span><br>
-        <img id="cropPreview" class="preview-img" alt="Cropped preview">
+        <div class="input-group">
+            <label for="regFileInput">Select Raw Camera Capture (1808x3200):</label>
+            <input type="file" id="regFileInput" accept="image/jpeg" onchange="handleRegisterFileSelect()">
+        </div>
+
+        <div class="input-group">
+            <label for="regMasterKey">Master Key:</label>
+            <input type="text" id="regMasterKey" placeholder="e.g. 1788597108139_1808x3200">
+        </div>
+
+        <div class="input-group">
+            <label for="regDeviceId">Hardware Device ID (HW-ID):</label>
+            <input type="text" id="regDeviceId" placeholder="e.g. A8F1C3E290D488BC">
+        </div>
+
+        <div class="input-group">
+            <label for="regStatus">Media Lifecycle Release Status:</label>
+            <select id="regStatus">
+                <option value="GENESIS">🔒 GENESIS (Unreleased Local Capture - Triggers Unauthorized Leak if spotted in wild)</option>
+                <option value="PUBLIC_RELEASED">🌐 PUBLIC_RELEASED (Authorized for public distribution)</option>
+            </select>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn-register" onclick="registerMasterPhoto()">Register Master Photo to Cloud</button>
+        </div>
+
+        <div id="regResultBox" class="result-box" style="margin-top: 16px;"></div>
     </div>
 
-    <div id="resultBox" class="result-box">
-        <div id="resultTitle" style="font-weight: bold; font-size: 1.1rem;"></div>
-        <div id="resultMeta" class="meta-info"></div>
+    <!-- ======================================================== -->
+    <!-- TAB 3: PLATFORM INGESTION SIMULATOR                      -->
+    <!-- ======================================================== -->
+    <div id="simTab" class="tab-content">
+        <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #ddd6fe; margin-bottom: 16px;">
+            🌐 <b>Simulation Ingress:</b> Simulates platform-side ingestion (WhatsApp / Facebook). Upload the compressed file to compute and seal its exact DNA transit fingerprint into <code>photo_sub_identities</code>.
+        </div>
+
+        <div class="input-group">
+            <label for="simChannel">Select Ingress Platform Channel:</label>
+            <select id="simChannel">
+                <option value="WHATSAPP">Meta WhatsApp (Standard 904x1600)</option>
+                <option value="FACEBOOK">Meta Facebook (Standard 1157x2048)</option>
+                <option value="MULTI_TRANSCODE">Multi-Platform Pipeline (WA &rarr; FB)</option>
+            </select>
+        </div>
+
+        <div class="input-group">
+            <label for="simFileInput">Select Platform-Processed File (Clean / Unmodified from Platform):</label>
+            <input type="file" id="simFileInput" accept="image/jpeg,image/png,image/webp" onchange="handleSimFileSelect()">
+        </div>
+
+        <div class="input-group">
+            <label for="simMasterKey">Master Key:</label>
+            <input type="text" id="simMasterKey" placeholder="e.g. 1788597108139_1808x3200">
+        </div>
+
+        <div class="btn-group">
+            <button class="btn-sim" onclick="simulatePlatformIngress()">Compute & Seal Sub-Identity DNA</button>
+        </div>
+
+        <div id="simResultBox" class="result-box" style="margin-top: 16px;"></div>
     </div>
 </div>
 
 <canvas id="canvas" style="display: none;"></canvas>
 
 <script>
-    const BLOCK_SIZE = 16;
-    const SCATTER_RATIO = 0.08;
+    // ==========================================
+    // 1. SUPABASE CLIENT CONFIGURATION
+    // ==========================================
+    const SUPABASE_URL = "https://rrfgkzgrendiibkxtamx.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJyZmdremdyZW5kaWlia3h0YW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2Njk4ODQsImV4cCI6MjEwNDI0NTg4NH0.34k6GGwUNg0GgprPHU125aUwRBSyE4nYH6xAthRhj_0";
+    
+    let supabaseClient = null;
+    try {
+        supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        console.log("Supabase Client initialized successfully!");
+    } catch(e) {
+        console.warn("Failed to initialize Supabase Client:", e);
+    }
 
-    // Precomputed 16x16 DCT Matrices
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        if (tabId === 'auditTab') {
+            document.querySelectorAll('.tab-btn')[0].classList.add('active');
+            document.getElementById('auditTab').classList.add('active');
+        } else if (tabId === 'registerTab') {
+            document.querySelectorAll('.tab-btn')[1].classList.add('active');
+            document.getElementById('registerTab').classList.add('active');
+        } else {
+            document.querySelectorAll('.tab-btn')[2].classList.add('active');
+            document.getElementById('simTab').classList.add('active');
+        }
+    }
+
+    // ==========================================
+    // 2. 1-BIT FORENSIC DCT ENGINE
+    // ==========================================
+    const BLOCK_SIZE = 16; 
+    const CAMERA_SCATTER_RATIO = 1.00;
+
     const C = Array.from({length: BLOCK_SIZE}, () => new Float64Array(BLOCK_SIZE));
     const CT = Array.from({length: BLOCK_SIZE}, () => new Float64Array(BLOCK_SIZE));
     const invSqrtN = 1.0 / Math.sqrt(BLOCK_SIZE);
@@ -92,7 +279,7 @@
         return Math.abs(hash);
     }
 
-    function fastForwardDCT16(inputBlock, outputCoefficients) {
+    function fastForwardDCT(inputBlock, outputCoefficients) {
         const temp = new Float64Array(BLOCK_SIZE * BLOCK_SIZE);
         for (let i = 0; i < BLOCK_SIZE; i++) {
             for (let j = 0; j < BLOCK_SIZE; j++) {
@@ -110,57 +297,189 @@
         }
     }
 
-    function getLumaAt(data, width, height, x, y) {
-        const px = Math.max(0, Math.min(width - 1, Math.floor(x)));
-        const py = Math.max(0, Math.min(height - 1, Math.floor(y)));
-        const idx = (py * width + px) * 4;
-        return 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+    let detectedHWInfo = { deviceId: null, signature: null };
+
+    async function autoDetectKeyFromName() {
+        const fileInput = document.getElementById('imageInput');
+        const keyInput = document.getElementById('keyInput');
+        if (!fileInput.files[0]) return;
+
+        const file = fileInput.files[0];
+        const name = file.name;
+        const match = name.match(/IMG_(\d+)/);
+
+        try {
+            const tags = await ExifReader.load(file);
+            if (tags['UserComment'] && tags['UserComment'].value) {
+                const comment = typeof tags['UserComment'].value === 'string' 
+                    ? tags['UserComment'].value 
+                    : String.fromCharCode.apply(null, tags['UserComment'].value);
+
+                if (comment.startsWith('SECUREPIXEL_V2|')) {
+                    const segs = comment.split('|');
+                    if (segs.length >= 4) {
+                        keyInput.value = segs[1];
+                        detectedHWInfo.deviceId = segs[2];
+                        detectedHWInfo.signature = segs[3];
+                    }
+                }
+            }
+        } catch(err) {}
+
+        if (match && !keyInput.value) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const tempImg = new Image();
+                tempImg.onload = function() {
+                    let w = tempImg.naturalWidth;
+                    let h = tempImg.naturalHeight;
+                    if (Math.max(w, h) <= 2048) {
+                        const isPortrait = h > w;
+                        w = isPortrait ? 1808 : 3200;
+                        h = isPortrait ? 3200 : 1808;
+                    }
+                    keyInput.value = `${match[1]}_${w}x${h}`;
+                };
+                tempImg.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
     }
 
-    // Deteksi presisi batas foto di dalam screenshot galeri
-    function detectExactPhotoBounds(data, width, height, canonicalAspect) {
-        const exactTargetHeight = Math.round(width / canonicalAspect);
+    function detectCenteredPhotoBounds(width, height, canonicalAspect) {
+        let exactTargetWidth, exactTargetHeight;
+        let leftX = 0, topY = 0;
+        const currentAspect = width / height;
 
-        const rowLumas = new Float64Array(height);
-        for (let y = 0; y < height; y++) {
-            let sum = 0.0;
-            let count = 0;
-            for (let x = 30; x < width - 30; x += 15) {
-                const idx = (y * width + x) * 4;
-                sum += 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-                count++;
-            }
-            rowLumas[y] = count > 0 ? (sum / count) : 0;
+        if (currentAspect < canonicalAspect) {
+            exactTargetWidth = width;
+            exactTargetHeight = Math.round(width / canonicalAspect);
+            topY = Math.max(0, Math.round((height - exactTargetHeight) / 2));
+        } else {
+            exactTargetHeight = height;
+            exactTargetWidth = Math.round(height * canonicalAspect);
+            leftX = Math.max(0, Math.round((width - exactTargetWidth) / 2));
         }
 
-        let topY = -1;
-        for (let y = 250; y < Math.floor(height * 0.65); y++) {
-            if (rowLumas[y - 4] < 10 && rowLumas[y - 2] < 10 && rowLumas[y] >= 15 && rowLumas[y + 4] >= 15) {
-                topY = y;
-                break;
+        return { x: leftX, y: topY, w: exactTargetWidth, h: exactTargetHeight };
+    }
+
+    let globalMacroblockMap = [];
+    let currentHeatmapMode = 'defects_only';
+
+    function renderHeatmapLayer(opacity) {
+        const overlay = document.getElementById('heatmapOverlay');
+        if (!overlay || globalMacroblockMap.length === 0) return;
+
+        const ctx = overlay.getContext('2d');
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        globalMacroblockMap.forEach(blk => {
+            if (blk.type === 'active') {
+                if (blk.matches === 0) {
+                    ctx.fillStyle = `rgba(239, 68, 68, ${opacity})`;
+                    ctx.fillRect(blk.x, blk.y, BLOCK_SIZE, BLOCK_SIZE);
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(blk.x, blk.y, BLOCK_SIZE, BLOCK_SIZE);
+                } else if (blk.matches === 1 && currentHeatmapMode === 'full_grid') {
+                    ctx.fillStyle = `rgba(16, 185, 129, ${opacity * 0.35})`;
+                    ctx.fillRect(blk.x, blk.y, BLOCK_SIZE, BLOCK_SIZE);
+                }
+            } else if (blk.type === 'dark_sealed_tampered') {
+                ctx.fillStyle = `rgba(239, 68, 68, ${opacity})`;
+                ctx.fillRect(blk.x, blk.y, BLOCK_SIZE, BLOCK_SIZE);
+                ctx.strokeStyle = "#fbbf24";
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(blk.x, blk.y, BLOCK_SIZE, BLOCK_SIZE);
+            } else if (blk.type === 'skipped' && currentHeatmapMode === 'full_grid') {
+                ctx.fillStyle = `rgba(100, 116, 139, ${opacity * 0.25})`;
+                ctx.fillRect(blk.x, blk.y, BLOCK_SIZE, BLOCK_SIZE);
+            }
+        });
+    }
+
+    function switchHeatmapMode(mode) {
+        currentHeatmapMode = mode;
+        const opacity = parseFloat(document.getElementById('opacitySlider').value);
+        renderHeatmapLayer(opacity);
+    }
+
+    function updateHeatmapOpacity(val) {
+        document.getElementById('opacityVal').innerText = `${Math.round(val * 100)}%`;
+        renderHeatmapLayer(parseFloat(val));
+    }
+
+    function detectTamperClusters(macroblockMap, targetWidth, targetHeight, activeMatchRate, isCompressedChannel) {
+        const cols = targetWidth / BLOCK_SIZE;
+        const rows = targetHeight / BLOCK_SIZE;
+        const grid = Array.from({length: rows}, () => new Int8Array(cols).fill(-1));
+
+        macroblockMap.forEach(blk => {
+            const c = Math.floor(blk.x / BLOCK_SIZE);
+            const r = Math.floor(blk.y / BLOCK_SIZE);
+            if (r < rows && c < cols) {
+                if (blk.type === 'active') {
+                    const isNearExtreme = isCompressedChannel && (blk.avgLuma < 28.0 || blk.avgLuma > 228.0);
+                    grid[r][c] = (blk.matches === 0 && isNearExtreme) ? 1 : blk.matches;
+                } else if (blk.type === 'dark_sealed_tampered') {
+                    grid[r][c] = 0;
+                }
+            }
+        });
+
+        let maxLocalDamageCluster = 0;
+        let clusterCenter = null;
+        const windowSize = 5;
+        const borderMargin = isCompressedChannel ? 2 : 0;
+
+        for (let r = borderMargin; r <= rows - windowSize - borderMargin; r++) {
+            for (let c = borderMargin; c <= cols - windowSize - borderMargin; c++) {
+                let zeroMatchesCount = 0;
+                for (let dr = 0; dr < windowSize; dr++) {
+                    for (let dc = 0; dc < windowSize; dc++) {
+                        if (grid[r + dr][c + dc] === 0) {
+                            zeroMatchesCount++;
+                        }
+                    }
+                }
+                if (zeroMatchesCount > maxLocalDamageCluster) {
+                    maxLocalDamageCluster = zeroMatchesCount;
+                    clusterCenter = { 
+                        x: Math.round((c + windowSize / 2) * BLOCK_SIZE), 
+                        y: Math.round((r + windowSize / 2) * BLOCK_SIZE) 
+                    };
+                }
             }
         }
 
-        if (topY <= 0) {
-            topY = Math.round((height - exactTargetHeight) / 2);
+        let adaptiveThreshold;
+        if (!isCompressedChannel) {
+            adaptiveThreshold = 5;
+        } else {
+            const naturalErrorRate = (100.0 - activeMatchRate) / 100.0;
+            adaptiveThreshold = Math.min(22, Math.round(naturalErrorRate * 18 + 18));
         }
 
         return {
-            x: 0,
-            y: topY,
-            w: width,
-            h: exactTargetHeight
+            maxLocalDamageCluster,
+            clusterCenter,
+            isLocalTampered: maxLocalDamageCluster >= adaptiveThreshold,
+            thresholdUsed: adaptiveThreshold
         };
     }
 
-    function auditImage(data, width, height, targetWidth, targetHeight, keyString, isDownscaled) {
+    function runEngineCore(data, width, height, targetWidth, targetHeight, keyString, isDownscaled) {
         const subSeed = deriveSubSeed(keyString, "PHOTO_DCT16");
         const rng = createPRNG(subSeed);
 
-        let totalAudited = 0;
-        let matchedBits = 0;
+        let totalActiveAudited = 0;
+        let matchedActiveBits = 0;
         let totalGapEnergy = 0.0;
+        let count100 = 0, count0 = 0;
+        let darkSealedCount = 0;
 
+        const macroblockMap = [];
         const totalPixelsPerBlock = BLOCK_SIZE * BLOCK_SIZE;
         const blockLuma = new Float64Array(totalPixelsPerBlock);
         const dctCoefficients = new Float64Array(totalPixelsPerBlock);
@@ -168,201 +487,548 @@
         const scaleX = width / targetWidth;
         const scaleY = height / targetHeight;
 
+        const minLumaThreshold = !isDownscaled ? 15.0 : 22.0;
+        const maxLumaThreshold = !isDownscaled ? 240.0 : 233.0;
+
         for (let by = 0; by < targetHeight; by += BLOCK_SIZE) {
             for (let bx = 0; bx < targetWidth; bx += BLOCK_SIZE) {
-                const isSelected = rng() <= SCATTER_RATIO;
+                const isSelected = rng() <= CAMERA_SCATTER_RATIO;
+                const expectedBit = rng() > 0.5 ? 1 : 0;
 
                 let blockSumLuma = 0.0;
 
-                if (!isDownscaled) {
-                    for (let y = 0; y < BLOCK_SIZE; y++) {
-                        const rowIdx = ((by + y) * width + bx) * 4;
-                        for (let x = 0; x < BLOCK_SIZE; x++) {
-                            const p = rowIdx + (x * 4);
-                            const luma = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
-                            blockSumLuma += luma;
-                            blockLuma[y * BLOCK_SIZE + x] = luma - 128.0;
-                        }
-                    }
-                } else {
-                    for (let y = 0; y < BLOCK_SIZE; y++) {
-                        const startY = (by + y) * scaleY;
-                        const endY = (by + y + 1) * scaleY;
+                for (let y = 0; y < BLOCK_SIZE; y++) {
+                    const sy = !isDownscaled 
+                        ? (by + y) 
+                        : Math.min(height - 1, Math.floor((by + y + 0.5) * scaleY));
+                    const rowOffset = sy * width * 4;
 
-                        for (let x = 0; x < BLOCK_SIZE; x++) {
-                            const startX = (bx + x) * scaleX;
-                            const endX = (bx + x + 1) * scaleX;
+                    for (let x = 0; x < BLOCK_SIZE; x++) {
+                        const sx = !isDownscaled 
+                            ? (bx + x) 
+                            : Math.min(width - 1, Math.floor((bx + x + 0.5) * scaleX));
 
-                            let subLumaSum = 0.0;
-                            let subSamples = 0;
+                        const p = rowOffset + (sx * 4);
+                        const luma = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
 
-                            const minSY = Math.max(0, Math.floor(startY));
-                            const maxSY = Math.min(height - 1, Math.floor(endY));
-                            const minSX = Math.max(0, Math.floor(startX));
-                            const maxSX = Math.min(width - 1, Math.floor(endX));
-
-                            for (let sy = minSY; sy <= maxSY; sy++) {
-                                const rowOffset = sy * width * 4;
-                                for (let sx = minSX; sx <= maxSX; sx++) {
-                                    const p = rowOffset + (sx * 4);
-                                    subLumaSum += 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
-                                    subSamples++;
-                                }
-                            }
-
-                            const luma = subSamples > 0 
-                                ? (subLumaSum / subSamples) 
-                                : getLumaAt(data, width, height, (startX + endX) / 2.0, (startY + endY) / 2.0);
-
-                            blockSumLuma += luma;
-                            blockLuma[y * BLOCK_SIZE + x] = luma - 128.0;
-                        }
+                        blockSumLuma += luma;
+                        blockLuma[y * BLOCK_SIZE + x] = luma;
                     }
                 }
 
-                const expectedBit1 = rng() > 0.5 ? 1 : 0;
-                const expectedBit2 = rng() > 0.5 ? 1 : 0;
-
-                if (!isSelected) continue;
-
                 const avgLuma = blockSumLuma / totalPixelsPerBlock;
-                if (avgLuma < 25.0 || avgLuma > 230.0) continue;
+                const isLumaSafe = (avgLuma >= minLumaThreshold && avgLuma <= maxLumaThreshold);
 
-                fastForwardDCT16(blockLuma, dctCoefficients);
+                for (let i = 0; i < totalPixelsPerBlock; i++) {
+                    blockLuma[i] -= 128.0;
+                }
+                fastForwardDCT(blockLuma, dctCoefficients);
 
-                // Pair 1: (2,1) vs (1,2)
-                const c1 = dctCoefficients[2 * BLOCK_SIZE + 1];
-                const c2 = dctCoefficients[1 * BLOCK_SIZE + 2];
-                const diff1 = c1 - c2;
-                const bit1 = diff1 > 0 ? 1 : 0;
-                if (bit1 === expectedBit1) matchedBits++;
-                totalGapEnergy += Math.abs(diff1);
-                totalAudited++;
+                if (isSelected && isLumaSafe) {
+                    const c1 = dctCoefficients[2 * BLOCK_SIZE + 1];
+                    const c2 = dctCoefficients[1 * BLOCK_SIZE + 2];
+                    const diff1 = c1 - c2;
+                    const matched = ((diff1 > 0 ? 1 : 0) === expectedBit);
 
-                // Pair 2: (3,1) vs (1,3)
-                const c3 = dctCoefficients[3 * BLOCK_SIZE + 1];
-                const c4 = dctCoefficients[1 * BLOCK_SIZE + 3];
-                const diff2 = c3 - c4;
-                const bit2 = diff2 > 0 ? 1 : 0;
-                if (bit2 === expectedBit2) matchedBits++;
-                totalGapEnergy += Math.abs(diff2);
-                totalAudited++;
+                    if (matched) {
+                        matchedActiveBits++;
+                        count100++;
+                    } else {
+                        count0++;
+                    }
+
+                    totalGapEnergy += Math.abs(diff1);
+                    totalActiveAudited++;
+
+                    macroblockMap.push({
+                        x: bx,
+                        y: by,
+                        type: 'active',
+                        matches: matched ? 1 : 0,
+                        avgLuma: avgLuma
+                    });
+
+                } else {
+                    darkSealedCount++;
+                    if (!isDownscaled) {
+                        if (avgLuma > 35.0 && avgLuma < 235.0) {
+                            macroblockMap.push({
+                                x: bx,
+                                y: by,
+                                type: 'dark_sealed_tampered',
+                                matches: 0,
+                                avgLuma: avgLuma
+                            });
+                            count0++;
+                        }
+                    } else {
+                        macroblockMap.push({
+                            x: bx,
+                            y: by,
+                            type: 'skipped',
+                            matches: -1,
+                            avgLuma: avgLuma
+                        });
+                    }
+                }
             }
         }
 
-        const avgGap = totalAudited > 0 ? (totalGapEnergy / totalAudited) : 0;
-        const matchRate = totalAudited > 0 ? (matchedBits / totalAudited) * 100 : 0;
-
-        return { matchRate, totalAudited, matchedBits, avgGap };
+        return {
+            activeMatchRate: totalActiveAudited > 0 ? (matchedActiveBits / totalActiveAudited) * 100 : 0,
+            matchedActiveBits,
+            totalActiveAudited,
+            totalGapEnergy,
+            count100, count0,
+            darkSealedCount,
+            macroblockMap
+        };
     }
 
-    function verifyImage() {
+    // Helper to evaluate an image element
+    function analyzeImageElement(img, rawKeyInput) {
+        const nativeWidth = img.naturalWidth;
+        const nativeHeight = img.naturalHeight;
+
+        const parts = rawKeyInput.split('_');
+        const dimParts = parts[parts.length - 1].split('x');
+        const canonicalWidth = parseInt(dimParts[0], 10);
+        const canonicalHeight = parseInt(dimParts[1], 10);
+        const canonicalAspect = canonicalWidth / canonicalHeight;
+        const screenAspect = nativeWidth / nativeHeight;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        canvas.width = nativeWidth;
+        canvas.height = nativeHeight;
+        ctx.drawImage(img, 0, 0, nativeWidth, nativeHeight);
+
+        const isScreenshot = Math.abs(screenAspect - canonicalAspect) > 0.08;
+        const rawData = ctx.getImageData(0, 0, nativeWidth, nativeHeight).data;
+
+        let res, auditMode, activeSourceCanvas;
+
+        if (isScreenshot) {
+            const bounds = detectCenteredPhotoBounds(nativeWidth, nativeHeight, canonicalAspect);
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.width = canonicalWidth;
+            cropCanvas.height = canonicalHeight;
+            const cropCtx = cropCanvas.getContext('2d');
+
+            cropCtx.drawImage(canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, canonicalWidth, canonicalHeight);
+            const croppedData = cropCtx.getImageData(0, 0, canonicalWidth, canonicalHeight).data;
+            res = runEngineCore(croppedData, canonicalWidth, canonicalHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
+            auditMode = `Symmetrically Cropped Screenshot (${bounds.w}x${bounds.h})`;
+            activeSourceCanvas = cropCanvas;
+        } else {
+            const isExactNative = (nativeWidth === canonicalWidth && nativeHeight === canonicalHeight);
+            if (isExactNative) {
+                res = runEngineCore(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
+                auditMode = `Raw Camera Original (${nativeWidth}x${nativeHeight})`;
+            } else {
+                res = runEngineCore(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, true);
+                auditMode = `Compressed Channel (${nativeWidth}x${nativeHeight} -> Canonical ${canonicalWidth}x${canonicalHeight})`;
+            }
+            activeSourceCanvas = canvas;
+        }
+
+        return { res, auditMode, activeSourceCanvas, isScreenshot, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight };
+    }
+
+    // ========================================================
+    // TAB 1 AUDIT LOGIC (EXACT DNA MATCHING & LEAK PREVENTION)
+    // ========================================================
+    async function processEngine() {
         const rawKeyInput = document.getElementById('keyInput').value.trim();
         const fileInput = document.getElementById('imageInput');
         const resultBox = document.getElementById('resultBox');
         const resultTitle = document.getElementById('resultTitle');
         const resultMeta = document.getElementById('resultMeta');
+        const jsonPayload = document.getElementById('jsonPayload');
         const previewContainer = document.getElementById('previewContainer');
         const cropPreview = document.getElementById('cropPreview');
+        const heatmapContainer = document.getElementById('heatmapContainer');
 
         if (!rawKeyInput || !fileInput.files[0]) {
-            alert('Please enter the Master Key and select an image file!');
-            return;
-        }
-
-        if (!rawKeyInput.includes('_') || !rawKeyInput.includes('x')) {
-            alert('Invalid Key Format! The Master Key MUST include dimensions (e.g. 1725166800000_2944x2944).');
+            alert('Please select an image file and ensure Master Key is provided!');
             return;
         }
 
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = async function(e) {
             const img = new Image();
-            img.onload = function() {
-                const nativeWidth = img.naturalWidth;
-                const nativeHeight = img.naturalHeight;
-
-                const canvas = document.getElementById('canvas');
-                const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-                canvas.width = nativeWidth;
-                canvas.height = nativeHeight;
-                ctx.drawImage(img, 0, 0, nativeWidth, nativeHeight);
-
-                const rawData = ctx.getImageData(0, 0, nativeWidth, nativeHeight).data;
-
-                // Extract locked dimension from key
-                const parts = rawKeyInput.split('_');
-                const dimParts = parts[parts.length - 1].split('x');
-                const canonicalWidth = parseInt(dimParts[0], 10);
-                const canonicalHeight = parseInt(dimParts[1], 10);
-
-                if (isNaN(canonicalWidth) || isNaN(canonicalHeight) || canonicalWidth <= 0 || canonicalHeight <= 0) {
-                    alert('Failed to parse dimensions from Master Key!');
-                    return;
-                }
-
-                const canonicalAspect = canonicalWidth / canonicalHeight;
-                const screenAspect = nativeWidth / nativeHeight;
-
-                // Deteksi jika gambar berupa screenshot dengan disparitas rasio layar
-                const isScreenshot = Math.abs(screenAspect - canonicalAspect) > 0.08;
-
-                let res, mode, threshold;
+            img.onload = async function() {
+                const analysis = analyzeImageElement(img, rawKeyInput);
+                const { res, auditMode, activeSourceCanvas, isScreenshot, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight } = analysis;
 
                 if (isScreenshot) {
-                    const bounds = detectExactPhotoBounds(rawData, nativeWidth, nativeHeight, canonicalAspect);
-
-                    const cropCanvas = document.createElement('canvas');
-                    cropCanvas.width = canonicalWidth;
-                    cropCanvas.height = canonicalHeight;
-                    const cropCtx = cropCanvas.getContext('2d');
-
-                    cropCtx.drawImage(
-                        canvas,
-                        bounds.x, bounds.y, bounds.w, bounds.h,
-                        0, 0, canonicalWidth, canonicalHeight
-                    );
-
                     previewContainer.style.display = 'block';
-                    cropPreview.src = cropCanvas.toDataURL('image/jpeg', 0.85);
-
-                    const croppedData = cropCtx.getImageData(0, 0, canonicalWidth, canonicalHeight).data;
-                    res = auditImage(croppedData, canonicalWidth, canonicalHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
-                    mode = `Screenshot Auto-Cropped (${bounds.w}x${bounds.h} @ Y:${bounds.y}) &rarr; Canonical Re-aligned (${canonicalWidth}x${canonicalHeight})`;
-                    threshold = 60.0;
+                    cropPreview.src = activeSourceCanvas.toDataURL('image/jpeg', 0.85);
                 } else {
                     previewContainer.style.display = 'none';
-                    const isExactNative = (nativeWidth === canonicalWidth && nativeHeight === canonicalHeight);
-
-                    if (isExactNative) {
-                        res = auditImage(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, false);
-                        mode = `Original Native Capture (${nativeWidth}x${nativeHeight}) [${canonicalWidth/16}x${canonicalHeight/16} Macroblocks]`;
-                        threshold = 85.0;
-                    } else {
-                        res = auditImage(rawData, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight, rawKeyInput, true);
-                        mode = `Compressed Social Media (${nativeWidth}x${nativeHeight} &rarr; Locked Grid ${canonicalWidth}x${canonicalHeight} [${canonicalWidth/16}x${canonicalHeight/16} Macroblocks])`;
-                        threshold = 68.0;
-                    }
                 }
+
+                globalMacroblockMap = res.macroblockMap;
+
+                const photoBase = document.getElementById('photoBaseCanvas');
+                const overlay = document.getElementById('heatmapOverlay');
+
+                photoBase.width = canonicalWidth;
+                photoBase.height = canonicalHeight;
+                overlay.width = canonicalWidth;
+                overlay.height = canonicalHeight;
+
+                const pbCtx = photoBase.getContext('2d');
+                pbCtx.drawImage(activeSourceCanvas, 0, 0, canonicalWidth, canonicalHeight);
+
+                heatmapContainer.style.display = 'block';
+                const initialOpacity = parseFloat(document.getElementById('opacitySlider').value);
+                renderHeatmapLayer(initialOpacity);
 
                 resultBox.style.display = 'block';
 
-                if (res.matchRate >= threshold) {
-                    resultBox.className = "result-box valid";
-                    resultTitle.innerHTML = `🟢 AUTHENTIC / VERIFIED (${res.matchRate.toFixed(2)}%)`;
-                } else {
-                    resultBox.className = "result-box invalid";
-                    resultTitle.innerHTML = `🔴 TAMPERED / FORGED (${res.matchRate.toFixed(2)}%)`;
+                const isExactNative = (nativeWidth === canonicalWidth && nativeHeight === canonicalHeight);
+                const clusterAnalysis = detectTamperClusters(
+                    res.macroblockMap, 
+                    canonicalWidth, 
+                    canonicalHeight, 
+                    res.activeMatchRate, 
+                    !isExactNative
+                );
+                const isLocalTampered = clusterAnalysis.isLocalTampered;
+
+                // =======================================================
+                // MICRO-DRIFT POLICY EVALUATION AGAINST DATABASE LEDGER
+                // =======================================================
+                let verdict = "UNKNOWN";
+                let masterRecord = null;
+                let subIdentity = null;
+                let platformProfile = null;
+                let detectedChannel = isExactNative ? 'RAW' : (isScreenshot ? 'SCREENSHOT' : 'UNKNOWN');
+                let expectedDNAScore = null;
+                let scoreDrift = null;
+                let isLeakAlert = false;
+
+                if (supabaseClient) {
+                    try {
+                        // 1. Fetch Master Registry
+                        const { data: masterData } = await supabaseClient
+                            .from('photo_master_registry')
+                            .select('*')
+                            .eq('master_key', rawKeyInput)
+                            .maybeSingle();
+
+                        masterRecord = masterData;
+
+                        // 2. Resolve Channel if compressed
+                        if (!isExactNative && !isScreenshot) {
+                            if (nativeWidth === 904 && nativeHeight === 1600) {
+                                detectedChannel = 'WHATSAPP';
+                            } else if (nativeWidth === 1157 && nativeHeight === 2048) {
+                                detectedChannel = 'FACEBOOK';
+                            } else {
+                                detectedChannel = 'MULTI_TRANSCODE';
+                            }
+
+                            // Fetch Platform Profile
+                            const { data: profData } = await supabaseClient
+                                .from('platform_profiles')
+                                .select('*')
+                                .eq('channel_code', detectedChannel)
+                                .maybeSingle();
+                            platformProfile = profData;
+
+                            // Fetch Exact Sub-Identity
+                            const { data: subData } = await supabaseClient
+                                .from('photo_sub_identities')
+                                .select('*')
+                                .eq('master_key', rawKeyInput)
+                                .eq('channel_code', detectedChannel)
+                                .maybeSingle();
+                            subIdentity = subData;
+                        }
+
+                        // Check Leakage Condition
+                        if (masterRecord && masterRecord.release_status === 'GENESIS' && !isExactNative) {
+                            isLeakAlert = true;
+                        }
+                    } catch(err) {
+                        console.error("Supabase Query Error:", err);
+                    }
                 }
 
+                const actualScore = parseFloat(res.activeMatchRate.toFixed(2));
+                const maxAllowedDrift = platformProfile ? parseFloat(platformProfile.max_allowed_drift) : 0.75;
+
+                if (res.activeMatchRate < 58.0) {
+                    verdict = "INVALID_KEY_OR_IMAGE";
+                    resultBox.className = "result-box invalid";
+                    resultTitle.innerHTML = `🔴 NOT AN OFFICIAL CAMERA / INVALID KEY (${actualScore}%)`;
+                } else if (isLocalTampered) {
+                    verdict = "TAMPER_DETECTED";
+                    resultBox.className = "result-box tampered";
+                    resultTitle.innerHTML = `🟡 LOCAL TAMPERING DETECTED! (${res.count0} damaged blocks, Peak: ${clusterAnalysis.maxLocalDamageCluster}/${clusterAnalysis.thresholdUsed})`;
+                } else if (isLeakAlert) {
+                    verdict = "UNAUTHORIZED_LEAK";
+                    resultBox.className = "result-box leak";
+                    resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is marked GENESIS by owner ${masterRecord.device_hw_id})`;
+                } else if (!isExactNative && !isScreenshot) {
+                    // Micro-Drift Verification against exact sub-identity
+                    if (subIdentity) {
+                        expectedDNAScore = parseFloat(subIdentity.exact_dna_score);
+                        scoreDrift = Math.abs(actualScore - expectedDNAScore);
+
+                        if (scoreDrift <= maxAllowedDrift) {
+                            verdict = "VERIFIED_MATCH";
+                            resultBox.className = "result-box valid";
+                            resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (Expected: ${expectedDNAScore}%, Actual: ${actualScore}%, Drift: ${scoreDrift.toFixed(2)}%)`;
+                        } else {
+                            verdict = "MANIPULATION_DETECTED";
+                            resultBox.className = "result-box tampered";
+                            resultTitle.innerHTML = `🔴 MANIPULATION DETECTED: DNA Drift Exceeded! (Expected: ${expectedDNAScore}%, Actual: ${actualScore}%, Drift: ${scoreDrift.toFixed(2)}% > Max Allowed ${maxAllowedDrift}%)`;
+                        }
+                    } else {
+                        verdict = "UNREGISTERED_SUB_IDENTITY";
+                        resultBox.className = "result-box leak";
+                        resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL BUT UNSEALED PLATFORM DNA (No recorded sub-identity for channel ${detectedChannel})`;
+                    }
+                } else {
+                    verdict = isExactNative ? "VERIFIED_ORIGINAL_RAW" : "VERIFIED_SCREENSHOT";
+                    resultBox.className = "result-box valid";
+                    resultTitle.innerHTML = `🟢 AUTHENTIC SOURCE (${auditMode})`;
+                }
+
+                // Log audit into audit_ledger
+                if (supabaseClient) {
+                    try {
+                        await supabaseClient.from('audit_ledger').insert([{
+                            master_key: rawKeyInput,
+                            channel_detected: detectedChannel,
+                            actual_match_rate: actualScore,
+                            expected_dna_score: expectedDNAScore,
+                            score_drift: scoreDrift !== null ? parseFloat(scoreDrift.toFixed(2)) : null,
+                            audit_verdict: verdict
+                        }]);
+                    } catch(err) {
+                        console.error("Failed to insert into audit_ledger:", err);
+                    }
+                }
+
+                const totalBlk = res.count100 + res.count0;
+                const p100 = totalBlk > 0 ? ((res.count100 / totalBlk) * 100).toFixed(1) : 0;
+                const p0 = totalBlk > 0 ? ((res.count0 / totalBlk) * 100).toFixed(1) : 0;
+
                 resultMeta.innerHTML = `
-                    <b>Bound Master Key:</b> ${rawKeyInput}<br>
-                    <b>Detection Mode:</b> ${mode}<br>
-                    <b>Average Differential Gap:</b> ${res.avgGap.toFixed(2)} (Target Nominal: 24.0)<br>
-                    <b>Matched Bits:</b> ${res.matchedBits.toLocaleString()} / ${res.totalAudited.toLocaleString()} bits<br>
-                    <b>Authenticity Threshold:</b> &ge; ${threshold.toFixed(2)}% (Random Baseline = 50.00%)
+                    <b>Master Key:</b> ${rawKeyInput}<br>
+                    <b>Hardware Binding:</b> ${masterRecord 
+                        ? `<span style="color: #38bdf8; font-weight: bold;">Registered Owner (HW-ID: ${masterRecord.device_hw_id}) [${masterRecord.release_status}]</span>` 
+                        : '<span style="color: #94a3b8;">Unregistered in master registry</span>'}<br>
+                    <b>Detected Channel:</b> ${detectedChannel} | <b>Audit Mode:</b> ${auditMode}<br>
+                    <b>Active Polarity Match:</b> ${res.matchedActiveBits.toLocaleString()} / ${res.totalActiveAudited.toLocaleString()} blocks (${actualScore}%)<br>
+                    ${expectedDNAScore !== null ? `<b>Platform Target DNA:</b> ${expectedDNAScore}% | <b>Observed Drift:</b> ${scoreDrift.toFixed(2)}% (Limit: &plusmn;${maxAllowedDrift}%)<br>` : ''}
+                    <b>Spatial Cluster Analysis:</b> ${isLocalTampered 
+                        ? `<span style="color: #f87171; font-weight: bold;">Dense damage cluster detected at X:${clusterAnalysis.clusterCenter.x}, Y:${clusterAnalysis.clusterCenter.y} (${clusterAnalysis.maxLocalDamageCluster} adjacent damaged blocks exceeding tolerance ${clusterAnalysis.thresholdUsed})!</span>` 
+                        : `<span style="color: #34d399;">Evenly distributed degradation (Peak: ${clusterAnalysis.maxLocalDamageCluster}, Safe Tolerance: ${clusterAnalysis.thresholdUsed})</span>`}<br>
+                    ${isLeakAlert ? `<span style="color: #fbbf24; font-weight: bold;">🚨 Alert: This image is marked GENESIS by owner (${masterRecord.device_hw_id}) but was audited from a public distribution channel!</span><br>` : ''}
+
+                    <div class="distribution-box">
+                        <b>Macroblock Health (${totalBlk.toLocaleString()} blocks):</b>
+                        <div class="bar-container">
+                            <div class="bar-100" style="width: ${p100}%;" title="100% Intact"></div>
+                            <div class="bar-0" style="width: ${p0}%;" title="0% Damaged"></div>
+                        </div>
+                        <span style="color: #34d399;">■ Intact: ${res.count100} (${p100}%)</span> | 
+                        <span style="color: #f87171; font-weight: bold;">■ Damaged / Modulated: ${res.count0} (${p0}%)</span>
+                    </div>
                 `;
+
+                jsonPayload.innerText = JSON.stringify({
+                    audit_verdict: verdict,
+                    channel_detected: detectedChannel,
+                    actual_match_rate: actualScore,
+                    expected_dna_score: expectedDNAScore,
+                    score_drift: scoreDrift !== null ? parseFloat(scoreDrift.toFixed(2)) : null,
+                    is_local_tampered: isLocalTampered,
+                    cluster_peak: clusterAnalysis.maxLocalDamageCluster,
+                    unauthorized_leak: isLeakAlert,
+                    owner_device_hw_id: masterRecord ? masterRecord.device_hw_id : "UNREGISTERED"
+                }, null, 2);
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(fileInput.files[0]);
+    }
+
+    // ========================================================
+    // TAB 2: REGISTER MASTER PHOTO
+    // ========================================================
+    async function handleRegisterFileSelect() {
+        const fileInput = document.getElementById('regFileInput');
+        const regMasterKey = document.getElementById('regMasterKey');
+        const regDeviceId = document.getElementById('regDeviceId');
+        const regBox = document.getElementById('regResultBox');
+        regBox.style.display = 'none';
+
+        if (!fileInput.files[0]) return;
+        const file = fileInput.files[0];
+
+        try {
+            const tags = await ExifReader.load(file);
+            if (tags['UserComment'] && tags['UserComment'].value) {
+                const comment = typeof tags['UserComment'].value === 'string' 
+                    ? tags['UserComment'].value 
+                    : String.fromCharCode.apply(null, tags['UserComment'].value);
+
+                if (comment.startsWith('SECUREPIXEL_V2|')) {
+                    const segs = comment.split('|');
+                    if (segs.length >= 4) {
+                        regMasterKey.value = segs[1];
+                        regDeviceId.value = segs[2];
+                        return;
+                    }
+                }
+            }
+        } catch(err) {}
+
+        const match = file.name.match(/IMG_(\d+)/);
+        if (match) {
+            regMasterKey.value = `${match[1]}_1808x3200`;
+        }
+    }
+
+    async function registerMasterPhoto() {
+        const fileInput = document.getElementById('regFileInput');
+        const masterKey = document.getElementById('regMasterKey').value.trim();
+        const deviceId = document.getElementById('regDeviceId').value.trim();
+        const status = document.getElementById('regStatus').value;
+        const regBox = document.getElementById('regResultBox');
+
+        if (!masterKey || !deviceId) {
+            alert('Master Key and Hardware Device ID are required!');
+            return;
+        }
+
+        if (!supabaseClient) {
+            alert('Supabase client is not connected!');
+            return;
+        }
+
+        let rawScore = 99.85; // Default baseline if not recalculated
+
+        if (fileInput.files[0]) {
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                const img = new Image();
+                img.onload = async function() {
+                    const analysis = analyzeImageElement(img, masterKey);
+                    rawScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
+                    await executeMasterRegistryInsert(masterKey, deviceId, rawScore, status, regBox);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(fileInput.files[0]);
+        } else {
+            await executeMasterRegistryInsert(masterKey, deviceId, rawScore, status, regBox);
+        }
+    }
+
+    async function executeMasterRegistryInsert(masterKey, deviceId, rawScore, status, regBox) {
+        try {
+            const { error } = await supabaseClient
+                .from('photo_master_registry')
+                .upsert([{
+                    master_key: masterKey,
+                    device_hw_id: deviceId,
+                    raw_exact_score: rawScore,
+                    release_status: status
+                }], { onConflict: 'master_key' });
+
+            if (error) throw error;
+
+            regBox.className = "result-box valid";
+            regBox.style.display = 'block';
+            regBox.innerHTML = `
+                <b>✅ Master Photo Successfully Registered!</b><br>
+                <b>Master Key:</b> ${masterKey}<br>
+                <b>Device HW-ID:</b> ${deviceId}<br>
+                <b>Raw Source Baseline:</b> ${rawScore}%<br>
+                <b>Lifecycle Release Status:</b> ${status}
+            `;
+        } catch(err) {
+            regBox.className = "result-box invalid";
+            regBox.style.display = 'block';
+            regBox.innerHTML = `<b>Registration Failed:</b> ${err.message}`;
+        }
+    }
+
+    // ========================================================
+    // TAB 3: PLATFORM INGESTION SIMULATOR
+    // ========================================================
+    function handleSimFileSelect() {
+        const fileInput = document.getElementById('simFileInput');
+        const simMasterKey = document.getElementById('simMasterKey');
+        const simBox = document.getElementById('simResultBox');
+        simBox.style.display = 'none';
+
+        if (!fileInput.files[0]) return;
+        const file = fileInput.files[0];
+        const match = file.name.match(/IMG_(\d+)/);
+        if (match && !simMasterKey.value) {
+            simMasterKey.value = `${match[1]}_1808x3200`;
+        }
+    }
+
+    async function simulatePlatformIngress() {
+        const channelCode = document.getElementById('simChannel').value;
+        const fileInput = document.getElementById('simFileInput');
+        const masterKey = document.getElementById('simMasterKey').value.trim();
+        const simBox = document.getElementById('simResultBox');
+
+        if (!masterKey || !fileInput.files[0]) {
+            alert('Please select the compressed platform file and provide the Master Key!');
+            return;
+        }
+
+        if (!supabaseClient) {
+            alert('Supabase client is not connected!');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            const img = new Image();
+            img.onload = async function() {
+                const analysis = analyzeImageElement(img, masterKey);
+                const exactScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
+                const resolutionStr = `${img.naturalWidth}x${img.naturalHeight}`;
+
+                try {
+                    const { error } = await supabaseClient
+                        .from('photo_sub_identities')
+                        .upsert([{
+                            master_key: masterKey,
+                            channel_code: channelCode,
+                            transit_resolution: resolutionStr,
+                            exact_dna_score: exactScore
+                        }], { onConflict: 'master_key,channel_code' });
+
+                    if (error) throw error;
+
+                    simBox.className = "result-box valid";
+                    simBox.style.display = 'block';
+                    simBox.innerHTML = `
+                        <b>🌐 Platform Transit DNA Sealed Successfully!</b><br>
+                        <b>Master Key:</b> ${masterKey}<br>
+                        <b>Platform Channel:</b> ${channelCode}<br>
+                        <b>Recorded Resolution:</b> ${resolutionStr}<br>
+                        <b>Exact Compressed DNA Score:</b> <span style="font-size: 1.1rem; color: #38bdf8; font-weight: bold;">${exactScore}%</span><br>
+                        <i>Sub-identity record established. Audits for this image on ${channelCode} must now strictly match ${exactScore}% (&plusmn;0.75%).</i>
+                    `;
+                } catch(err) {
+                    simBox.className = "result-box invalid";
+                    simBox.style.display = 'block';
+                    simBox.innerHTML = `<b>Simulation Ingress Failed:</b> ${err.message}`;
+                }
             };
             img.src = e.target.result;
         };
