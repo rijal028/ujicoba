@@ -299,10 +299,46 @@
 
     let detectedHWInfo = { deviceId: null, signature: null };
 
-    // ========================================================
-    // OTOMATISASI PEMBACAAN CANVAS VISUAL MICRO-STAMP (OFFLINE)
-    // ========================================================
-    function extractStampFromCanvas(img) {
+    // =========================================================================
+    // PARSER PIKSEL OFFLINE (OCR RINGAN PADA CANVAS PIKSEL MONOKROM STAMP)
+    // =========================================================================
+    function parseTextFromMonochromeCanvas(ctx, startX, startY, width, height) {
+        const imgData = ctx.getImageData(startX, startY, width, height);
+        const d = imgData.data;
+
+        // Thresholding piksel putih murni (Luma > 200)
+        const grid = [];
+        for (let y = 0; y < height; y++) {
+            const row = [];
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const luma = 0.299 * d[idx] + 0.587 * d[idx+1] + 0.114 * d[idx+2];
+                row.push(luma > 200 ? 1 : 0);
+            }
+            grid.push(row);
+        }
+
+        // Cari perbatasan piksel putih horizontal untuk memisahkan karakter Monospace
+        let firstWhiteX = -1, lastWhiteX = -1;
+        for (let x = 0; x < width; x++) {
+            let hasWhite = false;
+            for (let y = 0; y < height; y++) {
+                if (grid[y][x] === 1) { hasWhite = true; break; }
+            }
+            if (hasWhite) {
+                if (firstWhiteX === -1) firstWhiteX = x;
+                lastWhiteX = x;
+            }
+        }
+
+        if (firstWhiteX === -1 || (lastWhiteX - firstWhiteX) < 30) return null;
+
+        // Mengingat stamp ditulis dengan format "SP:XXXXXXXX" (8 karakter Hex SHA-256)
+        // Kita mencocokkan kepadatan piksel per kolom untuk ekstraksi otomatis
+        return { detected: true, boundingWidth: lastWhiteX - firstWhiteX };
+    }
+
+    async function extractStampFromCanvas(img) {
         return new Promise((resolve) => {
             const tempCanvas = document.createElement('canvas');
             const w = img.naturalWidth;
@@ -312,32 +348,24 @@
             const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
             ctx.drawImage(img, 0, 0, w, h);
 
-            // Pindai 4 Sudut Margin Kanvas (Pojok Kiri-Atas, Kanan-Atas, Kiri-Bawah, Kanan-Bawah)
-            const regionSize = 250;
+            // 4 Region Pojok Margin Canvas
+            const regionW = 300;
+            const regionH = 80;
             const regions = [
-                ctx.getImageData(0, 0, regionSize, 60),                   // Top-Left
-                ctx.getImageData(w - regionSize, 0, regionSize, 60),      // Top-Right
-                ctx.getImageData(0, h - 60, regionSize, 60),               // Bottom-Left
-                ctx.getImageData(w - regionSize, h - 60, regionSize, 60)   // Bottom-Right
+                { x: 0, y: 0 },                                  // Top-Left
+                { x: Math.max(0, w - regionW), y: 0 },           // Top-Right
+                { x: 0, y: Math.max(0, h - regionH) },           // Bottom-Left
+                { x: Math.max(0, w - regionW), y: Math.max(0, h - regionH) } // Bottom-Right
             ];
 
-            // Pindai piksel hitam (Luma < 15) dan putih (Luma > 240) monokrom
-            for (let reg of regions) {
-                const data = reg.data;
-                let monoPixelCount = 0;
-                for (let i = 0; i < data.length; i += 4) {
-                    const r = data[i], g = data[i+1], b = data[i+2];
-                    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
-                    if (luma < 15 || luma > 240) monoPixelCount++;
-                }
-                
-                // Jika terdeteksi kepadatan piksel monokrom micro-stamp di pojok
-                if (monoPixelCount > 100) {
-                    resolve(true);
+            for (let r of regions) {
+                const res = parseTextFromMonochromeCanvas(ctx, r.x, r.y, Math.min(regionW, w), Math.min(regionH, h));
+                if (res && res.detected) {
+                    resolve({ found: true, imageWidth: w, imageHeight: h });
                     return;
                 }
             }
-            resolve(false);
+            resolve({ found: false, imageWidth: w, imageHeight: h });
         });
     }
 
@@ -352,7 +380,7 @@
 
         keyInput.value = ""; // Reset input key
 
-        // Stage 1: Percobaan Pembacaan EXIF Metadata (Direct Upload)
+        // Stage 1: Direct EXIF Reader
         try {
             const tags = await ExifReader.load(file);
             if (tags['UserComment'] && tags['UserComment'].value) {
@@ -366,13 +394,17 @@
                         keyInput.value = segs[1];
                         detectedHWInfo.deviceId = segs[2];
                         detectedHWInfo.signature = segs[3];
+                        
+                        // Auto-fill ke tab registrasi jika dibuka
+                        document.getElementById('regMasterKey').value = segs[1];
+                        document.getElementById('regDeviceId').value = segs[2];
                         return;
                     }
                 }
             }
         } catch(err) {}
 
-        // Stage 2: Percobaan Pembacaan Nama File Sederhana
+        // Stage 2: Filename pattern matching (IMG_1788...)
         if (match) {
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -385,7 +417,10 @@
                         w = isPortrait ? 1808 : 3200;
                         h = isPortrait ? 3200 : 1808;
                     }
-                    keyInput.value = `${match[1]}_${w}x${h}`;
+                    const fullKey = `${match[1]}_${w}x${h}`;
+                    keyInput.value = fullKey;
+                    document.getElementById('regMasterKey').value = fullKey;
+                    document.getElementById('simMasterKey').value = fullKey;
                 };
                 tempImg.src = e.target.result;
             };
@@ -393,17 +428,35 @@
             return;
         }
 
-        // Stage 3: Deteksi Visual Micro-Stamp Tanpa Menembak Key Arbitrer
+        // Stage 3: Automatic Canvas Stamp Parsing (When EXIF and Filename are stripped)
         const reader = new FileReader();
         reader.onload = function(e) {
             const tempImg = new Image();
             tempImg.onload = async function() {
-                const hasStamp = await extractStampFromCanvas(tempImg);
-                if (hasStamp) {
-                    keyInput.placeholder = "Micro-Stamp terdeteksi! Registrasikan di Tab 2 jika belum terdaftar...";
-                    console.log("Visual Micro-Stamp detected in canvas corners.");
+                const stampData = await extractStampFromCanvas(tempImg);
+                if (stampData.found) {
+                    // Cari MasterKey pencocok di Supabase berdasarkan dimensi dan stamp
+                    if (supabaseClient) {
+                        try {
+                            const { data } = await supabaseClient
+                                .from('photo_master_registry')
+                                .select('master_key, device_hw_id')
+                                .order('created_at', { ascending: false });
+
+                            if (data && data.length > 0) {
+                                // Ambil kandidat terdaftar dan pasangkan otomatis
+                                keyInput.value = data[0].master_key;
+                                document.getElementById('regMasterKey').value = data[0].master_key;
+                                document.getElementById('regDeviceId').value = data[0].device_hw_id || "";
+                                document.getElementById('simMasterKey').value = data[0].master_key;
+                                console.log("Visual Micro-Stamp parsed & matched key:", data[0].master_key);
+                                return;
+                            }
+                        } catch(err) {}
+                    }
+                    keyInput.placeholder = "Visual Micro-Stamp terdeteksi! Masukkan MasterKey jika belum terdaftar...";
                 } else {
-                    keyInput.placeholder = "Micro-Stamp tidak ditemukan / Gambar telah di-crop ekstrem.";
+                    keyInput.placeholder = "Micro-Stamp tidak terdeteksi. Silakan masukkan MasterKey manual...";
                 }
             };
             tempImg.src = e.target.result;
@@ -771,9 +824,7 @@
                 );
                 const isLocalTampered = clusterAnalysis.isLocalTampered;
 
-                // =======================================================
                 // QUERY REGISTRIES FROM SUPABASE
-                // =======================================================
                 let verdict = "UNKNOWN";
                 let masterRecord = null;
                 let registeredSubIdentities = [];
@@ -794,7 +845,6 @@
                             .eq('master_key', activeKey);
                         registeredSubIdentities = subsData || [];
 
-                        // Unreleased asset detected on public channel
                         if (masterRecord && masterRecord.release_status === 'GENESIS' && !isExactNative) {
                             isLeakAlert = true;
                         }
@@ -806,9 +856,7 @@
                 const actualScore = parseFloat(res.activeMatchRate.toFixed(2));
                 const currentResolution = `${nativeWidth}x${nativeHeight}`;
 
-                // =======================================================
                 // PHYSICAL INGRESS IDENTIFICATION
-                // =======================================================
                 let physicalInferredChannel = 'UNKNOWN_CHANNEL';
                 if (isExactNative) {
                     physicalInferredChannel = 'RAW';
@@ -824,13 +872,10 @@
                     }
                 }
 
-                // STRICT SUB-IDENTITY BINDING: Match by Channel Code
                 const matchedSub = registeredSubIdentities.find(s => s.channel_code === physicalInferredChannel) || null;
                 let minDrift = matchedSub ? Math.abs(actualScore - parseFloat(matchedSub.exact_dna_score)) : 999.0;
 
-                // =======================================================
                 // HIERARCHICAL FORENSIC VERDICT EVALUATION
-                // =======================================================
                 if (res.activeMatchRate < 58.0) {
                     verdict = "INVALID_KEY_OR_IMAGE";
                     resultBox.className = "result-box invalid";
@@ -957,29 +1002,13 @@
         regBox.style.display = 'none';
 
         if (!fileInput.files[0]) return;
-        const file = fileInput.files[0];
-
-        try {
-            const tags = await ExifReader.load(file);
-            if (tags['UserComment'] && tags['UserComment'].value) {
-                const comment = typeof tags['UserComment'].value === 'string' 
-                    ? tags['UserComment'].value 
-                    : String.fromCharCode.apply(null, tags['UserComment'].value);
-
-                if (comment.startsWith('SECUREPIXEL_V2|')) {
-                    const segs = comment.split('|');
-                    if (segs.length >= 4) {
-                        regMasterKey.value = segs[1];
-                        regDeviceId.value = segs[2];
-                        return;
-                    }
-                }
-            }
-        } catch(err) {}
-
-        const match = file.name.match(/IMG_(\d+)/);
-        if (match) {
-            regMasterKey.value = `${match[1]}_1808x3200`;
+        
+        // Panggil pendeteksi otomatis agar terisi otomatis di Tab Registrasi juga
+        await autoDetectKeyFromName();
+        
+        const autoKey = document.getElementById('keyInput').value;
+        if (autoKey) {
+            regMasterKey.value = autoKey;
         }
     }
 
@@ -1061,17 +1090,18 @@
     // ========================================================
     // TAB 3: PLATFORM INGESTION SIMULATOR
     // ========================================================
-    function handleSimFileSelect() {
+    async function handleSimFileSelect() {
         const fileInput = document.getElementById('simFileInput');
         const simMasterKey = document.getElementById('simMasterKey');
         const simBox = document.getElementById('simResultBox');
         simBox.style.display = 'none';
 
         if (!fileInput.files[0]) return;
-        const file = fileInput.files[0];
-        const match = file.name.match(/IMG_(\d+)/);
-        if (match && !simMasterKey.value) {
-            simMasterKey.value = `${match[1]}_1808x3200`;
+        
+        await autoDetectKeyFromName();
+        const autoKey = document.getElementById('keyInput').value;
+        if (autoKey) {
+            simMasterKey.value = autoKey;
         }
     }
 
