@@ -14,6 +14,7 @@
         .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; max-width: 900px; width: 100%; padding: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
         h1 { font-size: 1.3rem; margin-top: 0; color: #38bdf8; text-align: center; }
         
+        /* Tab Navigation */
         .tab-bar { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 10px; }
         .tab-btn { flex: 1; padding: 10px; background: #0f172a; border: 1px solid #334155; border-radius: 6px; color: #94a3b8; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.82rem; }
         .tab-btn.active { background: #0284c7; color: #fff; border-color: #38bdf8; }
@@ -64,22 +65,25 @@
 <div class="card">
     <h1>SecurePixel Forensic & Ownership Hub</h1>
 
+    <!-- 3-Tab Bar -->
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('auditTab')">🔍 Forensic Audit & Verification</button>
         <button class="tab-btn" onclick="switchTab('registerTab')">📸 Register Master Photo (Origin)</button>
         <button class="tab-btn" onclick="switchTab('simTab')">🌐 Platform Ingestion Simulator</button>
     </div>
 
-    <!-- TAB 1: AUDIT & VERIFICATION -->
+    <!-- ======================================================== -->
+    <!-- TAB 1: AUDIT & VERIFICATION                              -->
+    <!-- ======================================================== -->
     <div id="auditTab" class="tab-content active">
         <div class="input-group">
-            <label for="imageInput">Select File to Audit:</label>
+            <label for="imageInput">Select File to Audit (Raw Camera / Downscaled Social Media / Tampered Asset):</label>
             <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" onchange="autoDetectKeyFromName()">
         </div>
 
         <div class="input-group">
-            <label for="keyInput">Master Key (Instant Pixel Auto-Parse):</label>
-            <input type="text" id="keyInput" placeholder="Auto-parsing pixels instantly...">
+            <label for="keyInput">Master Key (Auto-detected or manual input):</label>
+            <input type="text" id="keyInput" placeholder="e.g. 1788597108139_1808x3200">
         </div>
 
         <div class="btn-group">
@@ -128,20 +132,22 @@
         </div>
     </div>
 
-    <!-- TAB 2: REGISTER MASTER PHOTO -->
+    <!-- ======================================================== -->
+    <!-- TAB 2: REGISTER MASTER PHOTO (ORIGIN)                    -->
+    <!-- ======================================================== -->
     <div id="registerTab" class="tab-content">
         <div style="background: rgba(2, 132, 199, 0.1); border: 1px solid #0284c7; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #bae6fd; margin-bottom: 16px;">
-            📸 <b>Origin Registration:</b> Upload the original raw camera capture (&ge; 99.90% match or &le; 5 anomaly blocks).
+            📸 <b>Origin Registration:</b> Upload the original raw camera capture. The system verifies that the image strictly matches the Master Key with near-perfect integrity (<b>&ge; 99.90% match or &le; 5 anomaly blocks</b>) before allowing ownership registration.
         </div>
 
         <div class="input-group">
-            <label for="regFileInput">Select Raw Camera Capture:</label>
+            <label for="regFileInput">Select Raw Camera Capture (1808x3200):</label>
             <input type="file" id="regFileInput" accept="image/jpeg" onchange="handleRegisterFileSelect()">
         </div>
 
         <div class="input-group">
             <label for="regMasterKey">Master Key:</label>
-            <input type="text" id="regMasterKey" placeholder="Auto-extracted from image...">
+            <input type="text" id="regMasterKey" placeholder="e.g. 1788597108139_1808x3200">
         </div>
 
         <div class="input-group">
@@ -152,8 +158,8 @@
         <div class="input-group">
             <label for="regStatus">Media Lifecycle Release Status:</label>
             <select id="regStatus">
-                <option value="GENESIS">🔒 GENESIS (Unreleased Local Capture)</option>
-                <option value="PUBLIC_RELEASED">🌐 PUBLIC_RELEASED (Authorized Public Distribution)</option>
+                <option value="GENESIS">🔒 GENESIS (Unreleased Local Capture - Triggers Leak Alert if spotted in wild)</option>
+                <option value="PUBLIC_RELEASED">🌐 PUBLIC_RELEASED (Authorized for public distribution)</option>
             </select>
         </div>
 
@@ -164,10 +170,12 @@
         <div id="regResultBox" class="result-box" style="margin-top: 16px;"></div>
     </div>
 
-    <!-- TAB 3: PLATFORM INGESTION SIMULATOR -->
+    <!-- ======================================================== -->
+    <!-- TAB 3: PLATFORM INGESTION SIMULATOR                      -->
+    <!-- ======================================================== -->
     <div id="simTab" class="tab-content">
         <div style="background: rgba(139, 92, 246, 0.1); border: 1px solid #8b5cf6; padding: 12px; border-radius: 6px; font-size: 0.85rem; color: #ddd6fe; margin-bottom: 16px;">
-            🌐 <b>Simulation Ingress:</b> Simulates platform-side ingestion (WhatsApp / Facebook / Multi-Transcode).
+            🌐 <b>Simulation Ingress:</b> Simulates platform-side ingestion (WhatsApp / Facebook / Multi-Transcode). Upload the compressed file to compute and seal its exact DNA transit fingerprint into <code>photo_sub_identities</code>.
         </div>
 
         <div class="input-group">
@@ -180,13 +188,13 @@
         </div>
 
         <div class="input-group">
-            <label for="simFileInput">Select Platform-Processed File:</label>
+            <label for="simFileInput">Select Platform-Processed File (Clean / Unmodified from Platform):</label>
             <input type="file" id="simFileInput" accept="image/jpeg,image/png,image/webp" onchange="handleSimFileSelect()">
         </div>
 
         <div class="input-group">
             <label for="simMasterKey">Master Key:</label>
-            <input type="text" id="simMasterKey" placeholder="Auto-extracted from image...">
+            <input type="text" id="simMasterKey" placeholder="e.g. 1788597108139_1808x3200">
         </div>
 
         <div class="btn-group">
@@ -197,15 +205,22 @@
     </div>
 </div>
 
+<canvas id="canvas" style="display: none;"></canvas>
+
 <script>
-    // 1. SUPABASE CLIENT
+    // ==========================================
+    // 1. SUPABASE CLIENT CONFIGURATION
+    // ==========================================
     const SUPABASE_URL = "https://rrfgkzgrendiibkxtamx.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJyZmdremdyZW5kaWlia3h0YW14Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2Njk4ODQsImV4cCI6MjEwNDI0NTg4NH0.34k6GGwUNg0GgprPHU125aUwRBSyE4nYH6xAthRhj_0";
     
     let supabaseClient = null;
     try {
         supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    } catch(e) {}
+        console.log("Supabase Client initialized successfully!");
+    } catch(e) {
+        console.warn("Failed to initialize Supabase Client:", e);
+    }
 
     function switchTab(tabId) {
         document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -223,7 +238,9 @@
         }
     }
 
-    // 2. FORENSIC ENGINE CORE
+    // ==========================================
+    // 2. 1-BIT FORENSIC DCT ENGINE
+    // ==========================================
     const BLOCK_SIZE = 16; 
     const CAMERA_SCATTER_RATIO = 1.00;
 
@@ -282,51 +299,6 @@
 
     let detectedHWInfo = { deviceId: null, signature: null };
 
-    // =========================================================================
-    // FAST HIGH-CONTRAST PIXEL PARSER (SANGAT CEPAT - TANPA ENGINE OCR HEAVY)
-    // =========================================================================
-    function parseDirectStampFast(img) {
-        const w = img.naturalWidth;
-        const h = img.naturalHeight;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = w;
-        tempCanvas.height = h;
-        const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, w, h);
-
-        const cropW = Math.min(300, w);
-        const cropH = Math.min(80, h);
-        const corners = [
-            { x: 0, y: 0 },
-            { x: Math.max(0, w - cropW), y: 0 },
-            { x: 0, y: Math.max(0, h - cropH) },
-            { x: Math.max(0, w - cropW), y: Math.max(0, h - cropH) }
-        ];
-
-        for (let c of corners) {
-            const data = ctx.getImageData(c.x, c.y, cropW, cropH).data;
-            let monoPixels = 0;
-
-            // Binarization thresholding super cepat
-            for (let i = 0; i < data.length; i += 4) {
-                const luma = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
-                if (luma < 20 || luma > 235) monoPixels++;
-            }
-
-            // Jika daerah monokrom stamp terdeteksi di pojok kanvas
-            if (monoPixels > 80) {
-                let canonW = w, canonH = h;
-                if (Math.max(w, h) <= 2048) {
-                    const isPortrait = h > w;
-                    canonW = isPortrait ? 1808 : 3200;
-                    canonH = isPortrait ? 3200 : 1808;
-                }
-                return { found: true, canonW, canonH };
-            }
-        }
-        return { found: false };
-    }
-
     async function autoDetectKeyFromName() {
         const fileInput = document.getElementById('imageInput');
         const keyInput = document.getElementById('keyInput');
@@ -336,9 +308,6 @@
         const name = file.name;
         const match = name.match(/IMG_(\d+)/);
 
-        keyInput.value = "";
-
-        // 1. Cek Metadata EXIF (Jika Upload Langsung/Dokumen)
         try {
             const tags = await ExifReader.load(file);
             if (tags['UserComment'] && tags['UserComment'].value) {
@@ -349,15 +318,15 @@
                 if (comment.startsWith('SECUREPIXEL_V2|')) {
                     const segs = comment.split('|');
                     if (segs.length >= 4) {
-                        fillAllKeyInputs(segs[1], segs[2]);
-                        return;
+                        keyInput.value = segs[1];
+                        detectedHWInfo.deviceId = segs[2];
+                        detectedHWInfo.signature = segs[3];
                     }
                 }
             }
         } catch(err) {}
 
-        // 2. Cek Nama File
-        if (match) {
+        if (match && !keyInput.value) {
             const reader = new FileReader();
             reader.onload = function(e) {
                 const tempImg = new Image();
@@ -369,37 +338,11 @@
                         w = isPortrait ? 1808 : 3200;
                         h = isPortrait ? 3200 : 1808;
                     }
-                    fillAllKeyInputs(`${match[1]}_${w}x${h}`);
+                    keyInput.value = `${match[1]}_${w}x${h}`;
                 };
                 tempImg.src = e.target.result;
             };
             reader.readAsDataURL(file);
-            return;
-        }
-
-        // 3. FAST INSTANT PIXEL PARSING (< 100ms)
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const tempImg = new Image();
-            tempImg.onload = function() {
-                const res = parseDirectStampFast(tempImg);
-                if (res.found) {
-                    // Jika stamp terdeteksi tapi nama file di-strip WA (misal WhatsApp Image 2026-08-08.jpeg)
-                    // Ambil stamp dari canvas secara otomatis
-                    console.log("Micro-Stamp pixel area confirmed instantly!");
-                }
-            };
-            tempImg.src = e.target.result;
-        };
-        reader.readAsDataURL(file);
-    }
-
-    function fillAllKeyInputs(key, deviceId = "") {
-        document.getElementById('keyInput').value = key;
-        document.getElementById('regMasterKey').value = key;
-        document.getElementById('simMasterKey').value = key;
-        if (deviceId) {
-            document.getElementById('regDeviceId').value = deviceId;
         }
     }
 
@@ -415,7 +358,7 @@
         } else {
             exactTargetHeight = height;
             exactTargetWidth = Math.round(height * canonicalAspect);
-            leftX = Math.max(0, Math.round((height - exactTargetWidth) / 2));
+            leftX = Math.max(0, Math.round((width - exactTargetWidth) / 2));
         }
 
         return { x: leftX, y: topY, w: exactTargetWidth, h: exactTargetHeight };
@@ -691,6 +634,9 @@
         return { res, auditMode, activeSourceCanvas, isScreenshot, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight };
     }
 
+    // ========================================================
+    // TAB 1: AUDIT ENGINE (PRECISE MULTI-STAGE MATRIX RESOLUTION)
+    // ========================================================
     async function processEngine() {
         const rawKeyInput = document.getElementById('keyInput').value.trim();
         const fileInput = document.getElementById('imageInput');
@@ -702,18 +648,8 @@
         const cropPreview = document.getElementById('cropPreview');
         const heatmapContainer = document.getElementById('heatmapContainer');
 
-        if (!fileInput.files[0]) {
-            alert('Please select an image file to audit!');
-            return;
-        }
-
-        if (!rawKeyInput) {
-            await autoDetectKeyFromName();
-        }
-
-        const activeKey = document.getElementById('keyInput').value.trim();
-        if (!activeKey) {
-            alert('Please type or paste the MasterKey for this image.');
+        if (!rawKeyInput || !fileInput.files[0]) {
+            alert('Please select an image file and ensure Master Key is provided!');
             return;
         }
 
@@ -721,7 +657,7 @@
         reader.onload = async function(e) {
             const img = new Image();
             img.onload = async function() {
-                const analysis = analyzeImageElement(img, activeKey);
+                const analysis = analyzeImageElement(img, rawKeyInput);
                 const { res, auditMode, activeSourceCanvas, isScreenshot, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight } = analysis;
 
                 if (isScreenshot) {
@@ -760,6 +696,9 @@
                 );
                 const isLocalTampered = clusterAnalysis.isLocalTampered;
 
+                // =======================================================
+                // QUERY REGISTRIES FROM SUPABASE
+                // =======================================================
                 let verdict = "UNKNOWN";
                 let masterRecord = null;
                 let registeredSubIdentities = [];
@@ -770,25 +709,31 @@
                         const { data: masterData } = await supabaseClient
                             .from('photo_master_registry')
                             .select('*')
-                            .eq('master_key', activeKey)
+                            .eq('master_key', rawKeyInput)
                             .maybeSingle();
                         masterRecord = masterData;
 
                         const { data: subsData } = await supabaseClient
                             .from('photo_sub_identities')
                             .select('*')
-                            .eq('master_key', activeKey);
+                            .eq('master_key', rawKeyInput);
                         registeredSubIdentities = subsData || [];
 
+                        // Unreleased asset detected on public channel
                         if (masterRecord && masterRecord.release_status === 'GENESIS' && !isExactNative) {
                             isLeakAlert = true;
                         }
-                    } catch(err) {}
+                    } catch(err) {
+                        console.error("Supabase Query Error:", err);
+                    }
                 }
 
                 const actualScore = parseFloat(res.activeMatchRate.toFixed(2));
                 const currentResolution = `${nativeWidth}x${nativeHeight}`;
 
+                // =======================================================
+                // PHYSICAL INGRESS IDENTIFICATION
+                // =======================================================
                 let physicalInferredChannel = 'UNKNOWN_CHANNEL';
                 if (isExactNative) {
                     physicalInferredChannel = 'RAW';
@@ -797,6 +742,7 @@
                 } else if (Math.max(nativeWidth, nativeHeight) === 2048 || (nativeWidth === 1157 && nativeHeight === 2048)) {
                     physicalInferredChannel = 'FACEBOOK';
                 } else if (nativeWidth === 904 && nativeHeight === 1600) {
+                    // WA dimension: differentiate WA pure vs Multi-Transcode (WA -> FB)
                     if (actualScore >= 92.0) {
                         physicalInferredChannel = 'WHATSAPP';
                     } else {
@@ -804,25 +750,33 @@
                     }
                 }
 
+                // STRICT SUB-IDENTITY BINDING: Match by Channel Code
                 const matchedSub = registeredSubIdentities.find(s => s.channel_code === physicalInferredChannel) || null;
                 let minDrift = matchedSub ? Math.abs(actualScore - parseFloat(matchedSub.exact_dna_score)) : 999.0;
 
+                // =======================================================
+                // HIERARCHICAL FORENSIC VERDICT EVALUATION
+                // =======================================================
                 if (res.activeMatchRate < 58.0) {
+                    // Level 1: Wrong Key, Arbitrary Image, or AI Fake
                     verdict = "INVALID_KEY_OR_IMAGE";
                     resultBox.className = "result-box invalid";
                     resultTitle.innerHTML = `🔴 NOT AN OFFICIAL CAMERA / INVALID KEY (${actualScore}%)`;
 
                 } else if (isLocalTampered) {
+                    // Level 2: Local Physical Manipulation (Sticker/Brushstroke on 5x5 cluster)
                     verdict = "TAMPER_DETECTED";
                     resultBox.className = "result-box tampered";
                     resultTitle.innerHTML = `🟡 LOCAL MANIPULATION DETECTED! (${res.count0} damaged blocks, Cluster Peak: ${clusterAnalysis.maxLocalDamageCluster}/${clusterAnalysis.thresholdUsed})`;
 
                 } else if (isLeakAlert) {
+                    // Level 3: Unreleased Private File Leaked to External Channels
                     verdict = "UNAUTHORIZED_LEAK";
                     resultBox.className = "result-box leak";
                     resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is marked GENESIS by owner: ${masterRecord.device_hw_id}, detected on ${physicalInferredChannel})`;
 
                 } else if (isExactNative) {
+                    // Level 4: Pure Raw Camera Capture
                     if (actualScore >= 99.90 || res.count0 <= 5) {
                         verdict = "VERIFIED_ORIGINAL_RAW";
                         resultBox.className = "result-box valid";
@@ -834,44 +788,53 @@
                     }
 
                 } else if (isScreenshot) {
+                    // Level 5: Symmetric Mobile Screenshot
                     verdict = "VERIFIED_SCREENSHOT";
                     resultBox.className = "result-box valid";
                     resultTitle.innerHTML = `🟢 AUTHENTIC SOURCE (Symmetrically Cropped Screenshot)`;
 
                 } else {
+                    // Level 6: Compressed Distribution Channels
                     if (matchedSub && minDrift <= 0.85) {
+                        // Sub-identity is sealed and matches within micro-drift
                         verdict = "VERIFIED_MATCH";
                         resultBox.className = "result-box valid";
                         resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (${matchedSub.channel_code}: Target ${matchedSub.exact_dna_score}%, Actual ${actualScore}%, Drift ${minDrift.toFixed(2)}%)`;
 
                     } else if (matchedSub && minDrift > 0.85) {
+                        // Sub-identity exists, but the score drifted outside allowed tolerance
                         verdict = "MANIPULATION_DETECTED";
                         resultBox.className = "result-box tampered";
                         resultTitle.innerHTML = `🔴 SUB-IDENTITY DNA MISMATCH: Expected ${matchedSub.exact_dna_score}% on ${matchedSub.channel_code}, got ${actualScore}% (Drift: ${minDrift.toFixed(2)}% > limit &plusmn;0.85%)`;
 
                     } else if (physicalInferredChannel === 'MULTI_TRANSCODE') {
+                        // Multi-transcode natural degradation without pre-registered sub-identity
                         verdict = "UNAUTHORIZED_TRANSIT_LEAK";
                         resultBox.className = "result-box leak";
                         resultTitle.innerHTML = `⚠️ CROSS-PLATFORM LEAK / UNSEALED MUTATION (${actualScore}% - Natural WA &rarr; FB multi-compression detected, but not registered as a legitimate transit sub-identity)`;
 
                     } else {
+                        // Authentic signal, but specific sub-identity is not registered yet in Tab 3
                         verdict = "UNREGISTERED_TRANSIT_CHANNEL";
                         resultBox.className = "result-box leak";
                         resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL ON ${physicalInferredChannel} (${actualScore}% - No sub-identity baseline registered yet for this platform in Tab 3)`;
                     }
                 }
 
+                // Log audit into Supabase
                 if (supabaseClient) {
                     try {
                         await supabaseClient.from('audit_ledger').insert([{
-                            master_key: activeKey,
+                            master_key: rawKeyInput,
                             channel_detected: physicalInferredChannel,
                             actual_match_rate: actualScore,
                             expected_dna_score: matchedSub ? parseFloat(matchedSub.exact_dna_score) : null,
                             score_drift: matchedSub ? parseFloat(minDrift.toFixed(2)) : null,
                             audit_verdict: verdict
                         }]);
-                    } catch(err) {}
+                    } catch(err) {
+                        console.error("Failed to insert into audit_ledger:", err);
+                    }
                 }
 
                 const totalBlk = res.count100 + res.count0;
@@ -879,7 +842,7 @@
                 const p0 = totalBlk > 0 ? ((res.count0 / totalBlk) * 100).toFixed(1) : 0;
 
                 resultMeta.innerHTML = `
-                    <b>Master Key:</b> ${activeKey}<br>
+                    <b>Master Key:</b> ${rawKeyInput}<br>
                     <b>Hardware Binding:</b> ${masterRecord 
                         ? `<span style="color: #38bdf8; font-weight: bold;">Registered Owner (${masterRecord.device_hw_id}) [${masterRecord.release_status}]</span>` 
                         : '<span style="color: #94a3b8;">Unregistered in master registry</span>'}<br>
@@ -919,13 +882,41 @@
         reader.readAsDataURL(fileInput.files[0]);
     }
 
+    // ========================================================
+    // TAB 2: REGISTER MASTER PHOTO (STRICT 99.90% / <= 5 BLOCKS)
+    // ========================================================
     async function handleRegisterFileSelect() {
         const fileInput = document.getElementById('regFileInput');
+        const regMasterKey = document.getElementById('regMasterKey');
+        const regDeviceId = document.getElementById('regDeviceId');
         const regBox = document.getElementById('regResultBox');
         regBox.style.display = 'none';
 
         if (!fileInput.files[0]) return;
-        await autoDetectKeyFromName();
+        const file = fileInput.files[0];
+
+        try {
+            const tags = await ExifReader.load(file);
+            if (tags['UserComment'] && tags['UserComment'].value) {
+                const comment = typeof tags['UserComment'].value === 'string' 
+                    ? tags['UserComment'].value 
+                    : String.fromCharCode.apply(null, tags['UserComment'].value);
+
+                if (comment.startsWith('SECUREPIXEL_V2|')) {
+                    const segs = comment.split('|');
+                    if (segs.length >= 4) {
+                        regMasterKey.value = segs[1];
+                        regDeviceId.value = segs[2];
+                        return;
+                    }
+                }
+            }
+        } catch(err) {}
+
+        const match = file.name.match(/IMG_(\d+)/);
+        if (match) {
+            regMasterKey.value = `${match[1]}_1808x3200`;
+        }
     }
 
     async function registerMasterPhoto() {
@@ -940,7 +931,15 @@
             return;
         }
 
-        if (!fileInput.files[0] || !supabaseClient) return;
+        if (!fileInput.files[0]) {
+            alert('Please select the original raw camera capture file to verify authenticity before registering!');
+            return;
+        }
+
+        if (!supabaseClient) {
+            alert('Supabase client is not connected!');
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = async function(e) {
@@ -950,6 +949,7 @@
                 const rawScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
                 const damagedBlocks = analysis.res.count0;
 
+                // STRICT GATEKEEPER: >= 99.90% OR damaged blocks <= 5
                 const isPristine = (rawScore >= 99.90 || damagedBlocks <= 5);
 
                 if (!isPristine) {
@@ -958,7 +958,7 @@
                     regBox.innerHTML = `
                         <b>❌ REGISTRATION REJECTED!</b><br>
                         <b>Active Polarity Match:</b> ${rawScore}% (${damagedBlocks} damaged blocks)<br>
-                        <i>Pristine camera source must achieve &ge; 99.90% with &le; 5 damaged blocks.</i>
+                        <i>Pristine camera source must achieve &ge; 99.90% with &le; 5 damaged blocks. Mismatched, edited, or arbitrary images cannot claim master ownership!</i>
                     `;
                     return;
                 }
@@ -981,7 +981,8 @@
                         <b>✅ Master Photo Verified & Registered!</b><br>
                         <b>Master Key:</b> ${masterKey}<br>
                         <b>Device HW-ID:</b> ${deviceId}<br>
-                        <b>Verified Baseline:</b> ${rawScore}% (${damagedBlocks} anomaly blocks)
+                        <b>Verified Pristine Baseline:</b> ${rawScore}% (${damagedBlocks} anomaly blocks)<br>
+                        <b>Lifecycle Release Status:</b> ${status}
                     `;
                 } catch(err) {
                     regBox.className = "result-box invalid";
@@ -994,13 +995,21 @@
         reader.readAsDataURL(fileInput.files[0]);
     }
 
-    async function handleSimFileSelect() {
+    // ========================================================
+    // TAB 3: PLATFORM INGESTION SIMULATOR
+    // ========================================================
+    function handleSimFileSelect() {
         const fileInput = document.getElementById('simFileInput');
+        const simMasterKey = document.getElementById('simMasterKey');
         const simBox = document.getElementById('simResultBox');
         simBox.style.display = 'none';
 
         if (!fileInput.files[0]) return;
-        await autoDetectKeyFromName();
+        const file = fileInput.files[0];
+        const match = file.name.match(/IMG_(\d+)/);
+        if (match && !simMasterKey.value) {
+            simMasterKey.value = `${match[1]}_1808x3200`;
+        }
     }
 
     async function simulatePlatformIngress() {
@@ -1009,7 +1018,15 @@
         const masterKey = document.getElementById('simMasterKey').value.trim();
         const simBox = document.getElementById('simResultBox');
 
-        if (!masterKey || !fileInput.files[0] || !supabaseClient) return;
+        if (!masterKey || !fileInput.files[0]) {
+            alert('Please select the compressed platform file and provide the Master Key!');
+            return;
+        }
+
+        if (!supabaseClient) {
+            alert('Supabase client is not connected!');
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = async function(e) {
@@ -1022,7 +1039,11 @@
                 if (exactScore < 58.0) {
                     simBox.className = "result-box invalid";
                     simBox.style.display = 'block';
-                    simBox.innerHTML = `<b>❌ Ingress Simulation Rejected!</b><br>Match Rate: ${exactScore}%`;
+                    simBox.innerHTML = `
+                        <b>❌ Ingress Simulation Rejected!</b><br>
+                        <b>Match Rate:</b> ${exactScore}% (Below 58.0% forensic baseline)<br>
+                        <i>Cannot seal sub-identity DNA for an invalid or non-corresponding asset.</i>
+                    `;
                     return;
                 }
 
@@ -1044,7 +1065,9 @@
                         <b>🌐 Platform Transit DNA Sealed Successfully!</b><br>
                         <b>Master Key:</b> ${masterKey}<br>
                         <b>Platform Channel:</b> ${channelCode}<br>
-                        <b>Exact Compressed DNA Score:</b> <b>${exactScore}%</b>
+                        <b>Recorded Resolution:</b> ${resolutionStr}<br>
+                        <b>Exact Compressed DNA Score:</b> <span style="font-size: 1.1rem; color: #38bdf8; font-weight: bold;">${exactScore}%</span><br>
+                        <i>Sub-identity record established. Audits for this image on ${channelCode} must now strictly match ${exactScore}% (&plusmn;0.85%).</i>
                     `;
                 } catch(err) {
                     simBox.className = "result-box invalid";
