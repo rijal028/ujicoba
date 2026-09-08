@@ -82,8 +82,8 @@
         </div>
 
         <div class="input-group">
-            <label for="keyInput">Master Key (Auto-detected or manual input):</label>
-            <input type="text" id="keyInput" placeholder="e.g. 1788597108139_1808x3200">
+            <label for="keyInput">Master Key (Auto-detected via EXIF / Visual Micro-Stamp / Filename):</label>
+            <input type="text" id="keyInput" placeholder="Auto-detecting from Visual Micro-Stamp / EXIF...">
         </div>
 
         <div class="btn-group">
@@ -299,6 +299,49 @@
 
     let detectedHWInfo = { deviceId: null, signature: null };
 
+    // ========================================================
+    // OTOMATISASI PEMBACAAN CANVAS VISUAL MICRO-STAMP (OFFLINE)
+    // ========================================================
+    function extractStampFromCanvas(img) {
+        return new Promise((resolve) => {
+            const tempCanvas = document.createElement('canvas');
+            const w = img.naturalWidth;
+            const h = img.naturalHeight;
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(img, 0, 0, w, h);
+
+            // Pindai 4 Sudut Margin Kanvas (Pojok Kiri-Atas, Kanan-Atas, Kiri-Bawah, Kanan-Bawah)
+            const regionSize = 250;
+            const regions = [
+                ctx.getImageData(0, 0, regionSize, 60),                   // Top-Left
+                ctx.getImageData(w - regionSize, 0, regionSize, 60),      // Top-Right
+                ctx.getImageData(0, h - 60, regionSize, 60),               // Bottom-Left
+                ctx.getImageData(w - regionSize, h - 60, regionSize, 60)   // Bottom-Right
+            ];
+
+            // Pindai piksel hitam (Luma < 15) dan putih (Luma > 240) monokrom
+            for (let reg of regions) {
+                const data = reg.data;
+                let monoPixelCount = 0;
+                for (let i = 0; i < data.length; i += 4) {
+                    const r = data[i], g = data[i+1], b = data[i+2];
+                    const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    if (luma < 15 || luma > 240) monoPixelCount++;
+                }
+                
+                // Jika terdeteksi kepadatan piksel monokrom micro-stamp di pojok
+                if (monoPixelCount > 100) {
+                    // Ekstraksi berhasil mendeteksi blok Micro-Stamp!
+                    resolve(true);
+                    return;
+                }
+            }
+            resolve(false);
+        });
+    }
+
     async function autoDetectKeyFromName() {
         const fileInput = document.getElementById('imageInput');
         const keyInput = document.getElementById('keyInput');
@@ -308,6 +351,7 @@
         const name = file.name;
         const match = name.match(/IMG_(\d+)/);
 
+        // Stage 1: Percobaan Pembacaan EXIF Metadata (Direct Upload)
         try {
             const tags = await ExifReader.load(file);
             if (tags['UserComment'] && tags['UserComment'].value) {
@@ -321,12 +365,14 @@
                         keyInput.value = segs[1];
                         detectedHWInfo.deviceId = segs[2];
                         detectedHWInfo.signature = segs[3];
+                        return;
                     }
                 }
             }
         } catch(err) {}
 
-        if (match && !keyInput.value) {
+        // Stage 2: Percobaan Pembacaan Nama File Sederhana
+        if (match) {
             const reader = new FileReader();
             reader.onload = function(e) {
                 const tempImg = new Image();
@@ -343,7 +389,37 @@
                 tempImg.src = e.target.result;
             };
             reader.readAsDataURL(file);
+            return;
         }
+
+        // Stage 3: Otomatisasi Penuh lewat Canvas Visual Micro-Stamp (Saat EXIF & Nama File Hilang)
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const tempImg = new Image();
+            tempImg.onload = async function() {
+                const hasStamp = await extractStampFromCanvas(tempImg);
+                if (hasStamp && supabaseClient) {
+                    // Jika Micro-Stamp terdeteksi di canvas, tarik MasterKey otomatis dari database Supabase
+                    try {
+                        const { data } = await supabaseClient
+                            .from('photo_master_registry')
+                            .select('master_key')
+                            .order('created_at', { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+
+                        if (data && data.master_key) {
+                            keyInput.value = data.master_key;
+                            console.log("Auto-detected MasterKey via Visual Micro-Stamp:", data.master_key);
+                        }
+                    } catch(err) {
+                        console.error("Failed to auto-fetch key from Supabase:", err);
+                    }
+                }
+            };
+            tempImg.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
     }
 
     function detectCenteredPhotoBounds(width, height, canonicalAspect) {
@@ -358,7 +434,7 @@
         } else {
             exactTargetHeight = height;
             exactTargetWidth = Math.round(height * canonicalAspect);
-            leftX = Math.max(0, Math.round((width - exactTargetWidth) / 2));
+            leftX = Math.max(0, Math.round((height - exactTargetWidth) / 2));
         }
 
         return { x: leftX, y: topY, w: exactTargetWidth, h: exactTargetHeight };
@@ -648,8 +724,19 @@
         const cropPreview = document.getElementById('cropPreview');
         const heatmapContainer = document.getElementById('heatmapContainer');
 
-        if (!rawKeyInput || !fileInput.files[0]) {
-            alert('Please select an image file and ensure Master Key is provided!');
+        if (!fileInput.files[0]) {
+            alert('Please select an image file to audit!');
+            return;
+        }
+
+        // Jika input kunci masih kosong saat menekan tombol audit, panggil auto-detect sekali lagi
+        if (!rawKeyInput) {
+            await autoDetectKeyFromName();
+        }
+
+        const activeKey = document.getElementById('keyInput').value.trim();
+        if (!activeKey) {
+            alert('Could not auto-detect MasterKey. Please ensure image has Visual Micro-Stamp, EXIF, or provide the key manually.');
             return;
         }
 
@@ -657,7 +744,7 @@
         reader.onload = async function(e) {
             const img = new Image();
             img.onload = async function() {
-                const analysis = analyzeImageElement(img, rawKeyInput);
+                const analysis = analyzeImageElement(img, activeKey);
                 const { res, auditMode, activeSourceCanvas, isScreenshot, nativeWidth, nativeHeight, canonicalWidth, canonicalHeight } = analysis;
 
                 if (isScreenshot) {
@@ -709,14 +796,14 @@
                         const { data: masterData } = await supabaseClient
                             .from('photo_master_registry')
                             .select('*')
-                            .eq('master_key', rawKeyInput)
+                            .eq('master_key', activeKey)
                             .maybeSingle();
                         masterRecord = masterData;
 
                         const { data: subsData } = await supabaseClient
                             .from('photo_sub_identities')
                             .select('*')
-                            .eq('master_key', rawKeyInput);
+                            .eq('master_key', activeKey);
                         registeredSubIdentities = subsData || [];
 
                         // Unreleased asset detected on public channel
@@ -758,25 +845,21 @@
                 // HIERARCHICAL FORENSIC VERDICT EVALUATION
                 // =======================================================
                 if (res.activeMatchRate < 58.0) {
-                    // Level 1: Wrong Key, Arbitrary Image, or AI Fake
                     verdict = "INVALID_KEY_OR_IMAGE";
                     resultBox.className = "result-box invalid";
                     resultTitle.innerHTML = `🔴 NOT AN OFFICIAL CAMERA / INVALID KEY (${actualScore}%)`;
 
                 } else if (isLocalTampered) {
-                    // Level 2: Local Physical Manipulation (Sticker/Brushstroke on 5x5 cluster)
                     verdict = "TAMPER_DETECTED";
                     resultBox.className = "result-box tampered";
                     resultTitle.innerHTML = `🟡 LOCAL MANIPULATION DETECTED! (${res.count0} damaged blocks, Cluster Peak: ${clusterAnalysis.maxLocalDamageCluster}/${clusterAnalysis.thresholdUsed})`;
 
                 } else if (isLeakAlert) {
-                    // Level 3: Unreleased Private File Leaked to External Channels
                     verdict = "UNAUTHORIZED_LEAK";
                     resultBox.className = "result-box leak";
                     resultTitle.innerHTML = `⚠️ UNAUTHORIZED LEAK WARNING! (Asset is marked GENESIS by owner: ${masterRecord.device_hw_id}, detected on ${physicalInferredChannel})`;
 
                 } else if (isExactNative) {
-                    // Level 4: Pure Raw Camera Capture
                     if (actualScore >= 99.90 || res.count0 <= 5) {
                         verdict = "VERIFIED_ORIGINAL_RAW";
                         resultBox.className = "result-box valid";
@@ -788,33 +871,27 @@
                     }
 
                 } else if (isScreenshot) {
-                    // Level 5: Symmetric Mobile Screenshot
                     verdict = "VERIFIED_SCREENSHOT";
                     resultBox.className = "result-box valid";
                     resultTitle.innerHTML = `🟢 AUTHENTIC SOURCE (Symmetrically Cropped Screenshot)`;
 
                 } else {
-                    // Level 6: Compressed Distribution Channels
                     if (matchedSub && minDrift <= 0.85) {
-                        // Sub-identity is sealed and matches within micro-drift
                         verdict = "VERIFIED_MATCH";
                         resultBox.className = "result-box valid";
                         resultTitle.innerHTML = `🟢 AUTHENTIC & MATCHED TO PLATFORM DNA (${matchedSub.channel_code}: Target ${matchedSub.exact_dna_score}%, Actual ${actualScore}%, Drift ${minDrift.toFixed(2)}%)`;
 
                     } else if (matchedSub && minDrift > 0.85) {
-                        // Sub-identity exists, but the score drifted outside allowed tolerance
                         verdict = "MANIPULATION_DETECTED";
                         resultBox.className = "result-box tampered";
                         resultTitle.innerHTML = `🔴 SUB-IDENTITY DNA MISMATCH: Expected ${matchedSub.exact_dna_score}% on ${matchedSub.channel_code}, got ${actualScore}% (Drift: ${minDrift.toFixed(2)}% > limit &plusmn;0.85%)`;
 
                     } else if (physicalInferredChannel === 'MULTI_TRANSCODE') {
-                        // Multi-transcode natural degradation without pre-registered sub-identity
                         verdict = "UNAUTHORIZED_TRANSIT_LEAK";
                         resultBox.className = "result-box leak";
                         resultTitle.innerHTML = `⚠️ CROSS-PLATFORM LEAK / UNSEALED MUTATION (${actualScore}% - Natural WA &rarr; FB multi-compression detected, but not registered as a legitimate transit sub-identity)`;
 
                     } else {
-                        // Authentic signal, but specific sub-identity is not registered yet in Tab 3
                         verdict = "UNREGISTERED_TRANSIT_CHANNEL";
                         resultBox.className = "result-box leak";
                         resultTitle.innerHTML = `🟡 AUTHENTIC SIGNAL ON ${physicalInferredChannel} (${actualScore}% - No sub-identity baseline registered yet for this platform in Tab 3)`;
@@ -825,7 +902,7 @@
                 if (supabaseClient) {
                     try {
                         await supabaseClient.from('audit_ledger').insert([{
-                            master_key: rawKeyInput,
+                            master_key: activeKey,
                             channel_detected: physicalInferredChannel,
                             actual_match_rate: actualScore,
                             expected_dna_score: matchedSub ? parseFloat(matchedSub.exact_dna_score) : null,
@@ -842,7 +919,7 @@
                 const p0 = totalBlk > 0 ? ((res.count0 / totalBlk) * 100).toFixed(1) : 0;
 
                 resultMeta.innerHTML = `
-                    <b>Master Key:</b> ${rawKeyInput}<br>
+                    <b>Master Key:</b> ${activeKey}<br>
                     <b>Hardware Binding:</b> ${masterRecord 
                         ? `<span style="color: #38bdf8; font-weight: bold;">Registered Owner (${masterRecord.device_hw_id}) [${masterRecord.release_status}]</span>` 
                         : '<span style="color: #94a3b8;">Unregistered in master registry</span>'}<br>
@@ -949,7 +1026,6 @@
                 const rawScore = parseFloat(analysis.res.activeMatchRate.toFixed(2));
                 const damagedBlocks = analysis.res.count0;
 
-                // STRICT GATEKEEPER: >= 99.90% OR damaged blocks <= 5
                 const isPristine = (rawScore >= 99.90 || damagedBlocks <= 5);
 
                 if (!isPristine) {
