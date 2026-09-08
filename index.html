@@ -333,7 +333,6 @@
                 
                 // Jika terdeteksi kepadatan piksel monokrom micro-stamp di pojok
                 if (monoPixelCount > 100) {
-                    // Ekstraksi berhasil mendeteksi blok Micro-Stamp!
                     resolve(true);
                     return;
                 }
@@ -350,6 +349,8 @@
         const file = fileInput.files[0];
         const name = file.name;
         const match = name.match(/IMG_(\d+)/);
+
+        keyInput.value = ""; // Reset input key
 
         // Stage 1: Percobaan Pembacaan EXIF Metadata (Direct Upload)
         try {
@@ -392,34 +393,22 @@
             return;
         }
 
-        // Stage 3: Otomatisasi Penuh lewat Canvas Visual Micro-Stamp (Saat EXIF & Nama File Hilang)
+        // Stage 3: Deteksi Visual Micro-Stamp Tanpa Menembak Key Arbitrer
         const reader = new FileReader();
         reader.onload = function(e) {
             const tempImg = new Image();
             tempImg.onload = async function() {
                 const hasStamp = await extractStampFromCanvas(tempImg);
-                if (hasStamp && supabaseClient) {
-                    // Jika Micro-Stamp terdeteksi di canvas, tarik MasterKey otomatis dari database Supabase
-                    try {
-                        const { data } = await supabaseClient
-                            .from('photo_master_registry')
-                            .select('master_key')
-                            .order('created_at', { ascending: false })
-                            .limit(1)
-                            .maybeSingle();
-
-                        if (data && data.master_key) {
-                            keyInput.value = data.master_key;
-                            console.log("Auto-detected MasterKey via Visual Micro-Stamp:", data.master_key);
-                        }
-                    } catch(err) {
-                        console.error("Failed to auto-fetch key from Supabase:", err);
-                    }
+                if (hasStamp) {
+                    keyInput.placeholder = "Micro-Stamp terdeteksi! Registrasikan di Tab 2 jika belum terdaftar...";
+                    console.log("Visual Micro-Stamp detected in canvas corners.");
+                } else {
+                    keyInput.placeholder = "Micro-Stamp tidak ditemukan / Gambar telah di-crop ekstrem.";
                 }
             };
             tempImg.src = e.target.result;
         };
-        reader.readAsDataURL(file);
+        reader.readAsDataURL(fileInput.files[0]);
     }
 
     function detectCenteredPhotoBounds(width, height, canonicalAspect) {
@@ -729,7 +718,6 @@
             return;
         }
 
-        // Jika input kunci masih kosong saat menekan tombol audit, panggil auto-detect sekali lagi
         if (!rawKeyInput) {
             await autoDetectKeyFromName();
         }
@@ -829,7 +817,6 @@
                 } else if (Math.max(nativeWidth, nativeHeight) === 2048 || (nativeWidth === 1157 && nativeHeight === 2048)) {
                     physicalInferredChannel = 'FACEBOOK';
                 } else if (nativeWidth === 904 && nativeHeight === 1600) {
-                    // WA dimension: differentiate WA pure vs Multi-Transcode (WA -> FB)
                     if (actualScore >= 92.0) {
                         physicalInferredChannel = 'WHATSAPP';
                     } else {
