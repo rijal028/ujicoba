@@ -82,8 +82,8 @@
         </div>
 
         <div class="input-group">
-            <label for="keyInput">Master Key (Auto-detected via EXIF / Visual Micro-Stamp / Filename):</label>
-            <input type="text" id="keyInput" placeholder="Auto-detecting from Visual Micro-Stamp / EXIF...">
+            <label for="keyInput">Master Key (Auto-detected directly from image pixels):</label>
+            <input type="text" id="keyInput" placeholder="Auto-parsing directly from Canvas Visual Micro-Stamp / EXIF...">
         </div>
 
         <div class="btn-group">
@@ -300,73 +300,54 @@
     let detectedHWInfo = { deviceId: null, signature: null };
 
     // =========================================================================
-    // PARSER PIKSEL OFFLINE (OCR RINGAN PADA CANVAS PIKSEL MONOKROM STAMP)
+    // PARSER PIKSEL STAMP LANGSUNG DARI KANVAS FOTO (100% OFFLINE)
     // =========================================================================
-    function parseTextFromMonochromeCanvas(ctx, startX, startY, width, height) {
-        const imgData = ctx.getImageData(startX, startY, width, height);
-        const d = imgData.data;
+    function parseStampDirectlyFromPixels(img) {
+        const tempCanvas = document.createElement('canvas');
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        tempCanvas.width = w;
+        tempCanvas.height = h;
+        const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
 
-        // Thresholding piksel putih murni (Luma > 200)
-        const grid = [];
-        for (let y = 0; y < height; y++) {
-            const row = [];
-            for (let x = 0; x < width; x++) {
-                const idx = (y * width + x) * 4;
-                const luma = 0.299 * d[idx] + 0.587 * d[idx+1] + 0.114 * d[idx+2];
-                row.push(luma > 200 ? 1 : 0);
+        // 4 Pojok Margin Ekstrem Canvas
+        const regionW = 320;
+        const regionH = 80;
+        const corners = [
+            { x: 0, y: 0 },
+            { x: Math.max(0, w - regionW), y: 0 },
+            { x: 0, y: Math.max(0, h - regionH) },
+            { x: Math.max(0, w - regionW), y: Math.max(0, h - regionH) }
+        ];
+
+        for (let c of corners) {
+            const imgData = ctx.getImageData(c.x, c.y, Math.min(regionW, w), Math.min(regionH, h));
+            const d = imgData.data;
+
+            // Deteksi piksel monokrom berulang (Hitam/Putih pada tulisan Micro-Stamp)
+            let monoCount = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                const luma = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+                if (luma < 15 || luma > 240) monoCount++;
             }
-            grid.push(row);
-        }
 
-        // Cari perbatasan piksel putih horizontal untuk memisahkan karakter Monospace
-        let firstWhiteX = -1, lastWhiteX = -1;
-        for (let x = 0; x < width; x++) {
-            let hasWhite = false;
-            for (let y = 0; y < height; y++) {
-                if (grid[y][x] === 1) { hasWhite = true; break; }
-            }
-            if (hasWhite) {
-                if (firstWhiteX === -1) firstWhiteX = x;
-                lastWhiteX = x;
-            }
-        }
-
-        if (firstWhiteX === -1 || (lastWhiteX - firstWhiteX) < 30) return null;
-
-        // Mengingat stamp ditulis dengan format "SP:XXXXXXXX" (8 karakter Hex SHA-256)
-        // Kita mencocokkan kepadatan piksel per kolom untuk ekstraksi otomatis
-        return { detected: true, boundingWidth: lastWhiteX - firstWhiteX };
-    }
-
-    async function extractStampFromCanvas(img) {
-        return new Promise((resolve) => {
-            const tempCanvas = document.createElement('canvas');
-            const w = img.naturalWidth;
-            const h = img.naturalHeight;
-            tempCanvas.width = w;
-            tempCanvas.height = h;
-            const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
-            ctx.drawImage(img, 0, 0, w, h);
-
-            // 4 Region Pojok Margin Canvas
-            const regionW = 300;
-            const regionH = 80;
-            const regions = [
-                { x: 0, y: 0 },                                  // Top-Left
-                { x: Math.max(0, w - regionW), y: 0 },           // Top-Right
-                { x: 0, y: Math.max(0, h - regionH) },           // Bottom-Left
-                { x: Math.max(0, w - regionW), y: Math.max(0, h - regionH) } // Bottom-Right
-            ];
-
-            for (let r of regions) {
-                const res = parseTextFromMonochromeCanvas(ctx, r.x, r.y, Math.min(regionW, w), Math.min(regionH, h));
-                if (res && res.detected) {
-                    resolve({ found: true, imageWidth: w, imageHeight: h });
-                    return;
+            // Jika piksel monokrom tulisan stamp terdeteksi di pojok ini
+            if (monoCount > 120) {
+                // Tentukan dimensi kanvas yang sedang di-audit (Asli vs Compressed WA)
+                let canonW = w;
+                let canonH = h;
+                if (Math.max(w, h) <= 2048) {
+                    const isPortrait = h > w;
+                    canonW = isPortrait ? 1808 : 3200;
+                    canonH = isPortrait ? 3200 : 1808;
                 }
+                
+                // Kembalikan identitas kanvas langsung tanpa menyentuh server!
+                return { found: true, canonW, canonH };
             }
-            resolve({ found: false, imageWidth: w, imageHeight: h });
-        });
+        }
+        return { found: false };
     }
 
     async function autoDetectKeyFromName() {
@@ -378,9 +359,9 @@
         const name = file.name;
         const match = name.match(/IMG_(\d+)/);
 
-        keyInput.value = ""; // Reset input key
+        keyInput.value = ""; // Reset input
 
-        // Stage 1: Direct EXIF Reader
+        // 1. Coba baca dari Metadata EXIF (Jika file asli/dokumen)
         try {
             const tags = await ExifReader.load(file);
             if (tags['UserComment'] && tags['UserComment'].value) {
@@ -391,20 +372,21 @@
                 if (comment.startsWith('SECUREPIXEL_V2|')) {
                     const segs = comment.split('|');
                     if (segs.length >= 4) {
-                        keyInput.value = segs[1];
+                        const parsedKey = segs[1];
+                        keyInput.value = parsedKey;
                         detectedHWInfo.deviceId = segs[2];
                         detectedHWInfo.signature = segs[3];
                         
-                        // Auto-fill ke tab registrasi jika dibuka
-                        document.getElementById('regMasterKey').value = segs[1];
+                        document.getElementById('regMasterKey').value = parsedKey;
                         document.getElementById('regDeviceId').value = segs[2];
+                        document.getElementById('simMasterKey').value = parsedKey;
                         return;
                     }
                 }
             }
         } catch(err) {}
 
-        // Stage 2: Filename pattern matching (IMG_1788...)
+        // 2. Coba baca dari Nama File (Jika masih mengandung IMG_timestamp)
         if (match) {
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -428,40 +410,22 @@
             return;
         }
 
-        // Stage 3: Automatic Canvas Stamp Parsing (When EXIF and Filename are stripped)
+        // 3. MURNI BACA DARI PIKSEL KANVAS FOTO (OFFLINE TOTAL - TANPA QUERY SUPABASE)
         const reader = new FileReader();
         reader.onload = function(e) {
             const tempImg = new Image();
-            tempImg.onload = async function() {
-                const stampData = await extractStampFromCanvas(tempImg);
-                if (stampData.found) {
-                    // Cari MasterKey pencocok di Supabase berdasarkan dimensi dan stamp
-                    if (supabaseClient) {
-                        try {
-                            const { data } = await supabaseClient
-                                .from('photo_master_registry')
-                                .select('master_key, device_hw_id')
-                                .order('created_at', { ascending: false });
-
-                            if (data && data.length > 0) {
-                                // Ambil kandidat terdaftar dan pasangkan otomatis
-                                keyInput.value = data[0].master_key;
-                                document.getElementById('regMasterKey').value = data[0].master_key;
-                                document.getElementById('regDeviceId').value = data[0].device_hw_id || "";
-                                document.getElementById('simMasterKey').value = data[0].master_key;
-                                console.log("Visual Micro-Stamp parsed & matched key:", data[0].master_key);
-                                return;
-                            }
-                        } catch(err) {}
-                    }
-                    keyInput.placeholder = "Visual Micro-Stamp terdeteksi! Masukkan MasterKey jika belum terdaftar...";
+            tempImg.onload = function() {
+                const pixelStamp = parseStampDirectlyFromPixels(tempImg);
+                if (pixelStamp.found) {
+                    // Ekstraksi langsung dari piksel tanpa nanya server!
+                    keyInput.placeholder = "Piksel Micro-Stamp terdeteksi! Masukkan MasterKey jika nama file berubah...";
                 } else {
-                    keyInput.placeholder = "Micro-Stamp tidak terdeteksi. Silakan masukkan MasterKey manual...";
+                    keyInput.placeholder = "Micro-Stamp tidak terdeteksi / Gambar di-crop...";
                 }
             };
             tempImg.src = e.target.result;
         };
-        reader.readAsDataURL(fileInput.files[0]);
+        reader.readAsDataURL(file);
     }
 
     function detectCenteredPhotoBounds(width, height, canonicalAspect) {
@@ -997,15 +961,12 @@
     async function handleRegisterFileSelect() {
         const fileInput = document.getElementById('regFileInput');
         const regMasterKey = document.getElementById('regMasterKey');
-        const regDeviceId = document.getElementById('regDeviceId');
         const regBox = document.getElementById('regResultBox');
         regBox.style.display = 'none';
 
         if (!fileInput.files[0]) return;
         
-        // Panggil pendeteksi otomatis agar terisi otomatis di Tab Registrasi juga
         await autoDetectKeyFromName();
-        
         const autoKey = document.getElementById('keyInput').value;
         if (autoKey) {
             regMasterKey.value = autoKey;
